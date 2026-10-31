@@ -1,67 +1,99 @@
-# Andy — voice-only personal AI with Ollama
+# Andy — personal voice AI for your PC
 
-Talk to Andy through your microphone and hear spoken replies. No typed chat or transcript. Conversations live only in server-request/browser memory and disappear on reload or New conversation. No API key is needed.
+Andy runs as a **native desktop app** on Arch Linux. Say **“Andy”**, wait for **“Yes?”**, then ask your question. Andy answers aloud using Ollama. No browser, API key, or cloud speech service is required for the desktop app.
 
-## Start on your computer
+## Install on Arch Linux
 
-On **Arch Linux**, install the tools and start Ollama:
+Install the system dependencies and start Ollama:
 
 ```bash
-sudo pacman -Syu git python ollama
+sudo pacman -Syu git python python-pip tk portaudio espeak-ng ollama
 sudo systemctl enable --now ollama
 ```
 
-Download Andy and the model:
+Download the project:
 
 ```bash
 git clone https://github.com/v-k-19/andy.git
 cd andy
-ollama pull qwen2.5:14b
-python3 server.py
 ```
 
-Open http://127.0.0.1:8000 in Chrome or Edge, allow microphone access, and click **Enable “Andy” wake word**. Keep the terminal open while using Andy.
-
-### Other operating systems
-
-Install Python 3.10+ and [Ollama](https://ollama.com), then:
+If you already cloned Andy, open its folder and update it instead:
 
 ```bash
-ollama pull qwen2.5:14b
-ollama serve
+git pull --ff-only
 ```
 
-If Ollama is already running, skip `ollama serve`. In a separate terminal:
+Install the local voice dependencies and download the English speech model:
 
 ```bash
-git clone https://github.com/v-k-19/andy.git
-cd andy
-python3 server.py
+bash install-desktop.sh
+ollama pull qwen2.5:14b
 ```
 
-Open http://127.0.0.1:8000 in Chrome or Edge. Allow microphone access. Tap the orb, speak, then tap again to finish. Andy responds aloud. Tap the orb to interrupt and speak again, or use Stop speaking. New conversation clears context.
+The installer creates a virtual environment, downloads the official Vosk small English voice model (about 40 MB), and adds **Andy** to your application menu. Model weights and dependencies are downloaded once; internet access is required for installation.
 
-## Wake word
+## Talk to Andy
 
-Click **Enable “Andy” wake word**, allow microphone access, then say “Andy, help me plan my day.” Pause after your question to send it. Andy speaks the reply and resumes wake-word listening. Say “Andy” alone, then ask your question within eight seconds. Disable wake word to end continuous listening. Recognition pauses during Andy’s spoken response to prevent self-triggering.
+Launch **Andy** from your application menu, or run this inside the project folder:
 
-This is browser speech recognition matching the word Andy, not an offline keyword detector. While enabled, microphone audio may be processed by the browser vendor even before the wake word. It works only while this page remains open and the browser permits microphone use; it is not a system-wide or guaranteed background assistant.
+```bash
+.venv/bin/python desktop.py
+```
 
-## Configuration
+1. Click **Start listening**.
+2. Say **“Andy”** and wait for the spoken **“Yes?”**.
+3. Ask your question in English, then pause to finish.
+4. Andy generates a reply through Ollama, speaks it, and returns to waiting for its name.
 
-`ANDY_MODEL` defaults to `qwen2.5:14b`. `OLLAMA_URL` defaults to `http://127.0.0.1:11434`; set it server-side if Ollama runs elsewhere. `PORT` defaults to `8000`. Set environment variables before starting; `.env` is not loaded automatically. Python 3.10+ and Node for JavaScript syntax checks; no application dependencies.
+Use **Pause / Stop** to close the microphone and stop speech. Starting again begins a fresh conversation. An in-progress Ollama request may take up to three minutes to finish before the Start button becomes available. Closing the app exits it. The app must remain running to hear the wake word; it can be minimized and does not depend on browser focus. It does not automatically start when you log in.
 
-Ollama must be reachable from the machine running Python. Run Andy alongside Ollama on your computer, or configure a reachable Ollama server.
+Wake-word detection uses a constrained local Vosk recognizer. This is speech recognition tuned to Andy’s name, not a custom-trained keyword model; accuracy still depends on microphone quality, noise, and pronunciation. Pause between the name and your question. Audio collected during Andy’s speech or model inference is discarded to avoid self-triggering. You can stop playback with **Pause / Stop**; voice interruption during playback is not supported.
 
-## Voice and privacy
+## Model and voice
 
-AI inference runs on your configured Ollama server. Browser speech recognition may send microphone audio to the browser vendor and may require internet access. Browser speech synthesis uses the device's available voices; some may be remote. This is not a fully offline speech pipeline. Microphone access requires localhost or HTTPS and browser support. No recordings, transcript files, or conversations are persisted by Andy. The app does not browse, access files, or run background actions.
+- **AI:** `qwen2.5:14b` by default. Suitable to try with 32 GB RAM, but CPU speed and available memory determine latency. No model can reliably answer every question.
+- **Speech recognition:** Vosk small English, running locally. Other languages are not configured.
+- **Spoken output:** local eSpeak NG; its voice is basic rather than a natural neural voice.
 
-The Python server is for local single-user use and binds to loopback. No authentication is included; do not expose it publicly.
+For faster CPU responses, try a smaller model:
+
+```bash
+ollama pull qwen2.5:7b
+ANDY_MODEL=qwen2.5:7b .venv/bin/python desktop.py
+```
+
+## Troubleshooting
+
+- **Microphone error:** check your input device in the desktop sound settings. List available devices with `.venv/bin/python -m sounddevice`. Select one with `ANDY_INPUT_DEVICE=DEVICE_NUMBER .venv/bin/python desktop.py`.
+- **Ollama cannot answer:** run `ollama list` and `systemctl status ollama`. Confirm the configured model is installed.
+- **No speech:** test `espeak-ng "Hello from Andy"` and check your sound output.
+- **Andy misses its name:** try a quiet room, move closer to the microphone, and say “Hey Andy” distinctly. Wait for “Yes?” before the question.
+- **No display:** the native window needs an active graphical desktop session. Run as your normal desktop user, not with sudo.
+- **App menu shortcut stops working:** rerun `bash install-desktop.sh` after moving the project directory.
+
+## Configuration and privacy
+
+Set variables before launching; `.env` files are not loaded automatically. Optional names are documented in `.env.example`:
+
+- `ANDY_MODEL`: Ollama model name.
+- `OLLAMA_URL`: defaults to `http://127.0.0.1:11434`. If changed to a remote server, your questions and conversation context go to that server.
+- `ANDY_VOICE_MODEL`: absolute path to a compatible Vosk English voice model directory.
+- `ANDY_INPUT_DEVICE`: input device index or name.
+
+Andy keeps conversation context and temporary audio buffers in memory. It does not save recordings or transcripts. With default local Ollama, speech and questions stay on your computer after installation. It cannot browse, access your files/apps, schedule reminders, or perform background actions outside the running assistant.
+
+## Legacy browser version
+
+The earlier browser app remains available with `python3 server.py`, then http://127.0.0.1:8000. It uses browser speech recognition, which may use an online service. Use `desktop.py` for native local voice operation.
 
 ## Checks
 
 ```bash
 python3 -m unittest discover -s tests -v
+python3 -m py_compile desktop.py download_voice_model.py server.py
+bash -n install-desktop.sh
 node --check static/app.js
 ```
+
+Automated tests mock the microphone and Ollama. Physical microphone recognition, desktop audio, and live model speed need testing on your computer.
