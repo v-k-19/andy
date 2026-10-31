@@ -7,7 +7,7 @@ Andy runs as a **native desktop app** on Arch Linux. Say **“Andy”**, wait fo
 Install the system dependencies and start Ollama:
 
 ```bash
-sudo pacman -Syu git python python-pip tk portaudio espeak-ng ollama
+sudo pacman -Syu git python python-pip portaudio espeak-ng ollama
 sudo systemctl enable --now ollama
 ```
 
@@ -33,6 +33,18 @@ ollama pull qwen2.5:14b
 
 The installer creates a virtual environment, downloads the official Vosk small English voice model (about 40 MB), and adds **Andy** to your application menu. Model weights and dependencies are downloaded once; internet access is required for installation.
 
+## Transparent particle orb
+
+Andy appears as a frameless, transparent native window: a blue-white particle cloud slowly folds and rotates over your desktop. There is no painted background or browser. The particles pulse differently during listening, thinking, and speaking; this indicates the current state, rather than measured audio amplitude.
+
+- **Click the orb / press Space:** start or pause listening.
+- **Drag:** move Andy around your desktop.
+- **Right-click:** Start listening, Pause / Stop speech, or Quit Andy.
+- **Escape:** close Andy when the window has keyboard focus.
+- **Hover:** show the current status. Setup and error messages also appear while idle.
+
+Window transparency needs a desktop compositor. Most current Wayland desktops provide one; X11 window managers may need compositing enabled. Rendering pauses when minimized while wake-word recognition continues. Animation runs at up to 25 frames per second to limit CPU use alongside Ollama.
+
 ## Talk to Andy
 
 Launch **Andy** from your application menu, or run this inside the project folder:
@@ -41,14 +53,14 @@ Launch **Andy** from your application menu, or run this inside the project folde
 .venv/bin/python desktop.py
 ```
 
-1. Click **Start listening**.
+1. Click the orb, or right-click it and choose **Start listening**.
 2. Say **“Andy”** and wait for the spoken **“Yes?”**.
 3. Ask your question in English, then pause to finish.
 4. Andy generates a reply through Ollama, speaks it, and returns to waiting for its name.
 
-Use **Pause / Stop** to close the microphone and stop speech. Starting again begins a fresh conversation. An in-progress Ollama request may take up to three minutes to finish before the Start button becomes available. Closing the app exits it. The app must remain running to hear the wake word; it can be minimized and does not depend on browser focus. It does not automatically start when you log in.
+Click the active orb or use **Pause / Stop speech** in its right-click menu to close the microphone and stop speech. Starting again begins a fresh conversation. An in-progress Ollama request may take up to three minutes to finish before listening can restart. Closing the app exits it. The app must remain running to hear the wake word; it can be minimized and does not depend on browser focus. It does not automatically start when you log in.
 
-Wake-word detection uses a constrained local Vosk recognizer. This is speech recognition tuned to Andy’s name, not a custom-trained keyword model; accuracy still depends on microphone quality, noise, and pronunciation. Pause between the name and your question. Audio collected during Andy’s speech or model inference is discarded to avoid self-triggering. You can stop playback with **Pause / Stop**; voice interruption during playback is not supported.
+Wake-word detection uses a constrained local Vosk recognizer. This is speech recognition tuned to Andy’s name, not a custom-trained keyword model; accuracy still depends on microphone quality, noise, and pronunciation. Pause between the name and your question. Audio collected during Andy’s speech or model inference is discarded to avoid self-triggering. You can stop playback with **Pause / Stop speech**; voice interruption during playback is not supported.
 
 ## Model and voice
 
@@ -91,7 +103,7 @@ The earlier browser app remains available with `python3 server.py`, then http://
 
 ```bash
 python3 -m unittest discover -s tests -v
-python3 -m py_compile desktop.py download_voice_model.py server.py
+python3 -m py_compile desktop.py particle_orb.py download_voice_model.py server.py
 bash -n install-desktop.sh
 node --check static/app.js
 ```
