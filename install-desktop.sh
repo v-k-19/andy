@@ -4,6 +4,7 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements-desktop.txt
 .venv/bin/python download_voice_model.py
+.venv/bin/python download_speech_model.py
 .venv/bin/python - <<'PY'
 import os
 from pathlib import Path

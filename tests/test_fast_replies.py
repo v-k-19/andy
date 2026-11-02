@@ -19,6 +19,21 @@ class FastReplyTests(unittest.TestCase):
         self.assertEqual(local_reply("What's today's date?",now),'Today is Monday, November 2, 2026.')
         self.assertEqual(local_reply('What day is it today?',now),'Today is Monday.')
 
+    def test_telugu_clock_and_day_use_local_facts(self):
+        now=datetime(2026,11,2,21,5)
+        self.assertEqual(local_reply('ఇప్పుడు టైమ్ ఎంత?',now),'ఇప్పుడు రాత్రి 9:05.')
+        self.assertEqual(local_reply('ఈరోజు ఏ రోజు',now),'ఈరోజు సోమవారం.')
+        self.assertIsNone(local_reply('సమయం అంటే ఏమిటి?',now))
+
+    def test_followup_keeps_previous_conversation(self):
+        history=[{'role':'user','content':'Explain gravity'}, {'role':'assistant','content':'Gravity attracts masses.'}]
+        with patch.object(desktop,'build_opener') as network:
+            network.return_value.open.return_value=closing(io.BytesIO(b'{"message":{"content":"A falling apple is an example."},"done":true}\n'))
+            desktop.ask_ollama(history,'Give me an example')
+            sent=json.loads(network.return_value.open.call_args.args[0].data)
+        self.assertEqual(sent['messages'][1:3],history)
+        self.assertEqual(sent['messages'][-1]['content'],'Give me an example')
+
     def test_other_time_questions_are_not_misrouted(self):
         for question in ['What is time dilation?', 'What time is it in London?', 'What time did World War Two end?', 'How do I set the time?']:
             self.assertIsNone(local_reply(question))

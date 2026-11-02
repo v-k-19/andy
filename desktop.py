@@ -1,5 +1,6 @@
 """Native, offline-voice Andy. Launch with .venv/bin/python desktop.py."""
 import json
+from datetime import datetime
 import os
 from pathlib import Path
 import queue
@@ -9,15 +10,22 @@ import subprocess
 import threading
 import time
 from local_answers import local_reply
+from speech_input import SpeechInput, speech_voice
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, ProxyHandler, build_opener
 
 ROOT = Path(__file__).resolve().parent
-MODEL_NAME = os.getenv('ANDY_MODEL', 'qwen2.5:3b')
+MODEL_NAME = os.getenv('ANDY_MODEL', 'gemma3:4b')
 VOICE_MODEL = Path(os.getenv('ANDY_VOICE_MODEL', str(ROOT / 'models' / 'vosk-model-small-en-us-0.15')))
-PROMPT = ('You are Andy, a practical personal AI voice assistant. Reply in natural, concise '
-          'spoken English without markdown. Normally use one to three short sentences unless more detail is requested. Be honest about uncertainty. You cannot browse, '
-          'access apps or files, or perform actions outside this conversation.')
+PROMPT = ('You are Andy, a practical personal AI voice assistant. Understand natural English, '
+          'Telugu, and mixed English/Telugu speech. Reply in the language the user is using; '
+          'use Telugu script for Telugu replies. Follow the recent conversation to resolve '
+          'follow-up questions. If the meaning is unclear, ask one short clarifying question '
+          'instead of inventing what the user meant. Be conversational and concise, usually '
+          'one to three short sentences unless more detail is requested. Use natural spoken language with no markdown. '
+          'Be honest about uncertainty and corrections. You can answer time and date from '
+          'the computer clock, but cannot browse, access apps or files, or perform actions '
+          'outside this conversation.')
 
 
 def is_wake_word(text):
@@ -34,7 +42,7 @@ def ask_ollama(history, text, on_sentence=None, stop=None):
             on_sentence(immediate)
         return immediate, messages + [{'role': 'assistant', 'content': immediate}]
     payload = {'model': MODEL_NAME, 'stream': True, 'keep_alive': '30m',
-               'messages': [{'role': 'system', 'content': PROMPT}] + messages,
+               'messages': [{'role': 'system', 'content': PROMPT + '\nCurrent computer local time and date: ' + datetime.now().astimezone().isoformat(timespec='minutes')}] + messages,
                'options': {'num_predict': 180, 'num_ctx': 2048}}
     req = Request(os.getenv('OLLAMA_URL', 'http://127.0.0.1:11434').rstrip('/') + '/api/chat',
                   data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
@@ -130,7 +138,7 @@ class VoiceWorker:
         with self.speaker_lock:
             if self.stop.is_set():
                 return
-            self.speaker = subprocess.Popen(['espeak-ng', '-v', 'en-us', '-s', '165', '--stdin'],
+            self.speaker = subprocess.Popen(['espeak-ng', '-v', speech_voice(text), '-s', '165', '--stdin'],
                                             stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                                             stderr=subprocess.DEVNULL)
             process = self.speaker
@@ -154,6 +162,8 @@ class VoiceWorker:
             SetLogLevel(-1)
             self.emit('Loading local voice recognition…', 'Your microphone is not open yet.')
             model = Model(str(VOICE_MODEL))
+            self.emit('Loading multilingual speech…', 'Preparing local English and Telugu recognition.')
+            speech = SpeechInput()
             device = os.getenv('ANDY_INPUT_DEVICE')
             if device and device.isdecimal():
                 device = int(device)
@@ -163,6 +173,7 @@ class VoiceWorker:
             command = KaldiRecognizer(model, rate)
             waiting = True
             deadline = 0
+            recorded = bytearray()
             if self.stop.is_set():
                 return
             self.stream = sd.RawInputStream(samplerate=rate, blocksize=int(rate / 5), device=device,
@@ -175,6 +186,7 @@ class VoiceWorker:
                         self.emit('Audio input interrupted', 'Check your microphone or reduce other CPU-heavy work.')
                     if not waiting and time.monotonic() > deadline:
                         command.Reset()
+                        recorded.clear()
                         waiting = True
                         wake.Reset()
                         self.emit('Say “Andy”', 'No question was heard. Ready when you are.')
@@ -190,14 +202,28 @@ class VoiceWorker:
                             self.say('Yes?')
                             self.clear_audio()
                             command.Reset()
+                            recorded.clear()
                             waiting = False
                             deadline = time.monotonic() + 30
-                            self.emit('Listening to your question…', 'Pause when you are finished. English speech is supported.')
+                            self.emit('Listening to your question…', 'Speak in English or Telugu; pause when finished.')
                     else:
+                        recorded.extend(data)
+                        # Vosk supplies only the speech endpoint here, not the words.
                         if command.AcceptWaveform(data):
-                            text = json.loads(command.Result()).get('text', '').strip()
-                            if not text:
+                            command.Result()
+                            self.emit('Understanding your words…', 'Transcribing English or Telugu locally.')
+                            transcript = speech.transcribe(bytes(recorded), rate)
+                            recorded.clear()
+                            if self.stop.is_set():
+                                break
+                            if not transcript.clear:
+                                self.emit('Please say that again', 'The speech was unclear. Listening for another attempt.')
+                                self.say('I did not catch that clearly. Please say it again.')
+                                self.clear_audio()
+                                command.Reset()
+                                deadline = time.monotonic() + 30
                                 continue
+                            text = transcript.text
                             self.emit('Thinking…', 'Preparing a reply. Time and date use your computer clock.')
                             def speak_sentence(sentence):
                                 self.emit('Andy is speaking', 'The microphone is ignored during playback.')
@@ -212,6 +238,7 @@ class VoiceWorker:
                                 self.emit('Ollama unavailable', str(exc))
                                 self.say('I could not reach the model. Please check Ollama. You can still ask me the time or date.')
                             self.clear_audio()
+                            recorded.clear()
                             waiting = True
                             wake.Reset()
                             command.Reset()
@@ -320,7 +347,7 @@ def main():
                     self.mode = 'listening'
                 elif heading in ('Andy is speaking', 'I heard you'):
                     self.mode = 'speaking'
-                elif heading.startswith(('Thinking', 'Loading')):
+                elif heading.startswith(('Thinking', 'Loading', 'Understanding')):
                     self.mode = 'thinking'
                 else:
                     self.mode = 'idle'

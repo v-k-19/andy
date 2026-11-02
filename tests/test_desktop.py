@@ -78,7 +78,9 @@ class DesktopTests(unittest.TestCase):
         def streamed_reply(history, text, on_sentence=None, stop=None):
             on_sentence('A processor runs instructions.')
             return 'A processor runs instructions.', []
-        with patch.dict('sys.modules', {'sounddevice':sd,'vosk':vosk}), patch.object(desktop.shutil,'which',return_value='/usr/bin/espeak-ng'), patch.object(desktop,'VOICE_MODEL') as model_path, patch.object(desktop,'ask_ollama',side_effect=streamed_reply) as ask:
+        with patch.dict('sys.modules', {'sounddevice':sd,'vosk':vosk}), patch.object(desktop.shutil,'which',return_value='/usr/bin/espeak-ng'), patch.object(desktop,'VOICE_MODEL') as model_path, patch.object(desktop,'SpeechInput') as speech, patch.object(desktop,'ask_ollama',side_effect=streamed_reply) as ask:
+            from speech_input import Transcript
+            speech.return_value.transcribe.return_value = Transcript('what is a processor', 'en', True)
             model_path.is_dir.return_value = True
             worker.run()
             self.assertEqual(ask.call_args.args, ([], 'what is a processor'))
