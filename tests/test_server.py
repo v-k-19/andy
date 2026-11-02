@@ -33,6 +33,14 @@ class AndyTests(unittest.TestCase):
             self.assertEqual(request.full_url,'http://127.0.0.1:11434/api/chat')
             self.assertFalse(json.loads(request.data)['stream'])
         self.assertEqual(h.result,(200,{'reply':'Hello, I am Andy.'}))
+    def test_time_does_not_require_ollama(self):
+        h=self.handler({'messages':[{'role':'user','content':'What time is it?'}]})
+        with patch.object(server,'build_opener') as network:
+            h.do_POST()
+            network.assert_not_called()
+        self.assertEqual(h.result[0],200)
+        self.assertTrue(h.result[1]['reply'].startswith("It's "))
+
     def test_unavailable_ollama(self):
         h=self.handler({'messages':[{'role':'user','content':'Hi'}]})
         with patch.object(server,'build_opener') as opener:

@@ -1,6 +1,7 @@
 """Andy: a dependency-free, local personal AI application."""
 import json
 import os
+from local_answers import local_reply
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, build_opener, ProxyHandler
@@ -25,7 +26,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == '/api/status':
-            return self.respond(200, {'configured': True, 'model': os.getenv('ANDY_MODEL', 'qwen2.5:14b')})
+            return self.respond(200, {'configured': True, 'model': os.getenv('ANDY_MODEL', 'qwen2.5:3b')})
         files = {'/': ('index.html', 'text/html'), '/app.js': ('app.js', 'text/javascript'), '/style.css': ('style.css', 'text/css')}
         if self.path not in files:
             return self.respond(404, {'error': 'Not found'})
@@ -59,7 +60,10 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError()
         except (ValueError, TypeError, AttributeError):
             return self.respond(400, {'error': 'Please send valid messages (up to 12,000 characters each).'})
-        payload = {'model': os.getenv('ANDY_MODEL', 'qwen2.5:14b'), 'stream': False, 'messages': [{'role': 'system', 'content': SYSTEM + '\nUser preferences:\n' + profile}] + [{'role': m['role'], 'content': m['content']} for m in messages], 'options': {'num_predict': 500}}
+        immediate = local_reply(messages[-1]['content']) if messages[-1]['role'] == 'user' else None
+        if immediate:
+            return self.respond(200, {'reply': immediate})
+        payload = {'model': os.getenv('ANDY_MODEL', 'qwen2.5:3b'), 'stream': False, 'messages': [{'role': 'system', 'content': SYSTEM + '\nUser preferences:\n' + profile}] + [{'role': m['role'], 'content': m['content']} for m in messages], 'options': {'num_predict': 180, 'num_ctx': 2048}}
         payload['messages'][0]['content'] += '\nYour replies are spoken aloud. Use natural short sentences. Avoid markdown, tables, and long lists.'
         request = Request(os.getenv('OLLAMA_URL', 'http://127.0.0.1:11434').rstrip('/') + '/api/chat', data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
         try:

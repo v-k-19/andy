@@ -28,7 +28,7 @@ Install the local voice dependencies and download the English speech model:
 
 ```bash
 bash install-desktop.sh
-ollama pull qwen2.5:14b
+ollama pull qwen2.5:3b
 ```
 
 The installer creates a virtual environment, downloads the official Vosk small English voice model (about 40 MB), and adds **Andy** to your application menu. Model weights and dependencies are downloaded once; internet access is required for installation.
@@ -64,16 +64,33 @@ Wake-word detection uses a constrained local Vosk recognizer. This is speech rec
 
 ## Model and voice
 
-- **AI:** `qwen2.5:14b` by default. Suitable to try with 32 GB RAM, but CPU speed and available memory determine latency. No model can reliably answer every question.
+- **AI:** `qwen2.5:3b` by default, prioritizing response speed on a CPU. Larger models can give better technical answers but are slower. No model can reliably answer every question.
 - **Speech recognition:** Vosk small English, running locally. Other languages are not configured.
 - **Spoken output:** local eSpeak NG; its voice is basic rather than a natural neural voice.
 
-For faster CPU responses, try a smaller model:
+For more detailed technical answers, you can explicitly select the slower, larger model:
 
 ```bash
-ollama pull qwen2.5:7b
-ANDY_MODEL=qwen2.5:7b .venv/bin/python desktop.py
+ollama pull qwen2.5:14b
+ANDY_MODEL=qwen2.5:14b .venv/bin/python desktop.py
 ```
+
+## Fast everyday answers
+
+Ask “What time is it?”, “What is today’s date?”, or “What day is it?”. Andy answers directly from your computer’s local clock without loading or calling Ollama. These answers work even if Ollama is unavailable; local voice dependencies must still be installed. For correct local time, verify your PC’s clock and timezone with `timedatectl`.
+
+For other questions the desktop app streams Ollama’s reply and speaks sentences as they arrive, rather than waiting for the whole answer. Context is limited to the latest 12 messages, model context to 2,048 tokens, and output to 180 tokens to reduce CPU latency. Answers are brief by default. Ollama is asked to keep the model loaded for 30 minutes after use; the first question after a cold start may still take longer. Model failures return Andy to wake-word listening instead of ending the voice session.
+
+To update from the earlier slow configuration, close Andy, open your project folder, and run:
+
+```bash
+git pull --ff-only
+ollama stop qwen2.5:14b
+ollama pull qwen2.5:3b
+ANDY_MODEL=qwen2.5:3b .venv/bin/python desktop.py
+```
+
+Stopping the old model frees its memory without deleting it. If it is not running, skip the stop command. Actual response speed still depends on your CPU, memory pressure, question, and initial model loading.
 
 ## Troubleshooting
 
@@ -103,7 +120,7 @@ The earlier browser app remains available with `python3 server.py`, then http://
 
 ```bash
 python3 -m unittest discover -s tests -v
-python3 -m py_compile desktop.py particle_orb.py download_voice_model.py server.py
+python3 -m py_compile desktop.py particle_orb.py local_answers.py download_voice_model.py server.py
 bash -n install-desktop.sh
 node --check static/app.js
 ```

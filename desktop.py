@@ -8,14 +8,15 @@ import shutil
 import subprocess
 import threading
 import time
+from local_answers import local_reply
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, ProxyHandler, build_opener
 
 ROOT = Path(__file__).resolve().parent
-MODEL_NAME = os.getenv('ANDY_MODEL', 'qwen2.5:14b')
+MODEL_NAME = os.getenv('ANDY_MODEL', 'qwen2.5:3b')
 VOICE_MODEL = Path(os.getenv('ANDY_VOICE_MODEL', str(ROOT / 'models' / 'vosk-model-small-en-us-0.15')))
 PROMPT = ('You are Andy, a practical personal AI voice assistant. Reply in natural, concise '
-          'spoken English without markdown. Be honest about uncertainty. You cannot browse, '
+          'spoken English without markdown. Normally use one to three short sentences unless more detail is requested. Be honest about uncertainty. You cannot browse, '
           'access apps or files, or perform actions outside this conversation.')
 
 
@@ -23,18 +24,59 @@ def is_wake_word(text):
     return bool(re.search(r'\b(?:andy|andi|andie)\b', text, re.IGNORECASE))
 
 
-def ask_ollama(history, text):
-    messages = (history + [{'role': 'user', 'content': text}])[-30:]
-    payload = {'model': MODEL_NAME, 'stream': False,
+def ask_ollama(history, text, on_sentence=None, stop=None):
+    if stop and stop.is_set():
+        return '', history
+    messages = (history + [{'role': 'user', 'content': text}])[-12:]
+    immediate = local_reply(text)
+    if immediate:
+        if on_sentence and not (stop and stop.is_set()):
+            on_sentence(immediate)
+        return immediate, messages + [{'role': 'assistant', 'content': immediate}]
+    payload = {'model': MODEL_NAME, 'stream': True, 'keep_alive': '30m',
                'messages': [{'role': 'system', 'content': PROMPT}] + messages,
-               'options': {'num_predict': 350}}
+               'options': {'num_predict': 180, 'num_ctx': 2048}}
     req = Request(os.getenv('OLLAMA_URL', 'http://127.0.0.1:11434').rstrip('/') + '/api/chat',
                   data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
+    answer, pending, completed = '', '', False
     try:
         with build_opener(ProxyHandler({})).open(req, timeout=180) as response:
-            answer = json.load(response)['message']['content']
-        if not isinstance(answer, str) or not answer.strip():
-            raise ValueError('Empty reply')
+            for line in response:
+                if stop and stop.is_set():
+                    return '', history
+                if not line.strip():
+                    continue
+                part = json.loads(line)
+                if part.get('error'):
+                    raise ValueError('Ollama could not finish the answer')
+                chunk = part.get('message', {}).get('content', '')
+                if not isinstance(chunk, str):
+                    raise ValueError('Invalid response')
+                answer += chunk
+                pending += chunk
+                if on_sentence:
+                    while True:
+                        boundary = re.search(r'(?<=[.!?])\s+', pending)
+                        if boundary:
+                            sentence, pending = pending[:boundary.start()], pending[boundary.end():]
+                        elif len(pending) > 220 and ' ' in pending:
+                            boundary_index = pending.rfind(' ', 0, 220)
+                            if boundary_index <= 0:
+                                break
+                            sentence, pending = pending[:boundary_index], pending[boundary_index + 1:]
+                        else:
+                            break
+                        if stop and stop.is_set():
+                            return '', history
+                        if sentence.strip():
+                            on_sentence(sentence.strip())
+                if part.get('done'):
+                    completed = True
+                    break
+        if not completed or not answer.strip():
+            raise ValueError('Incomplete reply')
+        if on_sentence and pending.strip() and not (stop and stop.is_set()):
+            on_sentence(pending.strip())
     except HTTPError as exc:
         raise RuntimeError('Ollama rejected the request. Check that the selected model is installed.') from exc
     except (URLError, TimeoutError, ValueError, KeyError, IndexError, TypeError) as exc:
@@ -156,13 +198,19 @@ class VoiceWorker:
                             text = json.loads(command.Result()).get('text', '').strip()
                             if not text:
                                 continue
-                            self.emit('Thinking…', 'Ollama is answering locally. A larger model can take a while.')
-                            answer, updated_history = ask_ollama(self.history, text)
-                            if self.stop.is_set():
-                                break
-                            self.history = updated_history
-                            self.emit('Andy is speaking', 'The microphone is ignored during playback.')
-                            self.say(answer)
+                            self.emit('Thinking…', 'Preparing a reply. Time and date use your computer clock.')
+                            def speak_sentence(sentence):
+                                self.emit('Andy is speaking', 'The microphone is ignored during playback.')
+                                self.say(sentence)
+                            try:
+                                answer, updated_history = ask_ollama(
+                                    self.history, text, on_sentence=speak_sentence, stop=self.stop)
+                                if self.stop.is_set():
+                                    break
+                                self.history = updated_history
+                            except RuntimeError as exc:
+                                self.emit('Ollama unavailable', str(exc))
+                                self.say('I could not reach the model. Please check Ollama. You can still ask me the time or date.')
                             self.clear_audio()
                             waiting = True
                             wake.Reset()

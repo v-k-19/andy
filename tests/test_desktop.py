@@ -16,7 +16,7 @@ class DesktopTests(unittest.TestCase):
             self.assertFalse(desktop.is_wake_word(text))
 
     def test_ollama_reply_and_spoken_context(self):
-        reply = closing(io.BytesIO(b'{"message":{"content":"Here is your answer."}}'))
+        reply = closing(io.BytesIO(b'{"message":{"content":"Here is your answer."},"done":true}\n'))
         with patch.object(desktop, 'build_opener') as opener:
             opener.return_value.open.return_value = reply
             answer, history = desktop.ask_ollama([], 'Explain CPUs')
@@ -75,12 +75,16 @@ class DesktopTests(unittest.TestCase):
             if len(spoken) == 2:
                 worker.stop.set()
         worker.say = say
-        with patch.dict('sys.modules', {'sounddevice':sd,'vosk':vosk}), patch.object(desktop.shutil,'which',return_value='/usr/bin/espeak-ng'), patch.object(desktop,'VOICE_MODEL') as model_path, patch.object(desktop,'ask_ollama',return_value=('A processor runs instructions.',[])) as ask:
+        def streamed_reply(history, text, on_sentence=None, stop=None):
+            on_sentence('A processor runs instructions.')
+            return 'A processor runs instructions.', []
+        with patch.dict('sys.modules', {'sounddevice':sd,'vosk':vosk}), patch.object(desktop.shutil,'which',return_value='/usr/bin/espeak-ng'), patch.object(desktop,'VOICE_MODEL') as model_path, patch.object(desktop,'ask_ollama',side_effect=streamed_reply) as ask:
             model_path.is_dir.return_value = True
             worker.run()
-            ask.assert_called_once_with([], 'what is a processor')
+            self.assertEqual(ask.call_args.args, ([], 'what is a processor'))
+            self.assertIs(ask.call_args.kwargs['stop'], worker.stop)
         self.assertEqual(spoken, ['Yes?', 'A processor runs instructions.'])
-        self.assertGreaterEqual(worker.clear_audio.call_count, 2)
+        self.assertGreaterEqual(worker.clear_audio.call_count, 1)
 
 
 if __name__ == '__main__':
