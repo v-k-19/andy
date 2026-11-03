@@ -75,7 +75,7 @@ class DesktopTests(unittest.TestCase):
             if len(spoken) == 2:
                 worker.stop.set()
         worker.say = say
-        def streamed_reply(history, text, on_sentence=None, stop=None):
+        def streamed_reply(history, text, on_sentence=None, stop=None, information=None):
             on_sentence('A processor runs instructions.')
             return 'A processor runs instructions.', []
         with patch.dict('sys.modules', {'sounddevice':sd,'vosk':vosk}), patch.object(desktop.shutil,'which',return_value='/usr/bin/espeak-ng'), patch.object(desktop,'VOICE_MODEL') as model_path, patch.object(desktop,'SpeechInput') as speech, patch.object(desktop,'ask_ollama',side_effect=streamed_reply) as ask:

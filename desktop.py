@@ -10,33 +10,34 @@ import subprocess
 import threading
 import time
 from local_answers import local_reply
-from speech_input import SpeechInput, speech_voice
+from speech_input import SpeechInput
+from voice_output import speech_command
+from live_information import LiveInformation
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, ProxyHandler, build_opener
 
 ROOT = Path(__file__).resolve().parent
 MODEL_NAME = os.getenv('ANDY_MODEL', 'gemma3:4b')
 VOICE_MODEL = Path(os.getenv('ANDY_VOICE_MODEL', str(ROOT / 'models' / 'vosk-model-small-en-us-0.15')))
-PROMPT = ('You are Andy, a practical personal AI voice assistant. Understand natural English, '
-          'Telugu, and mixed English/Telugu speech. Reply in the language the user is using; '
-          'use Telugu script for Telugu replies. Follow the recent conversation to resolve '
-          'follow-up questions. If the meaning is unclear, ask one short clarifying question '
-          'instead of inventing what the user meant. Be conversational and concise, usually '
-          'one to three short sentences unless more detail is requested. Use natural spoken language with no markdown. '
-          'Be honest about uncertainty and corrections. You can answer time and date from '
-          'the computer clock, but cannot browse, access apps or files, or perform actions '
-          'outside this conversation.')
+PROMPT = ('You are Andy, a practical personal AI voice assistant. Always reply in clear English. '
+          'Follow the recent conversation to resolve follow-up questions. If the meaning is '
+          'unclear, ask one short clarifying question instead of inventing intent. Be warm, '
+          'conversational and concise, usually one to three sentences. Use natural spoken '
+          'language with no markdown. Be honest about uncertainty. Time and date are supplied '
+          'by the computer clock; current weather and news are retrieved by dedicated live '
+          'information functions. You cannot independently browse, access apps or files, or '
+          'perform actions outside this conversation. Never guess current news or weather.')
 
 
 def is_wake_word(text):
     return bool(re.search(r'\b(?:andy|andi|andie)\b', text, re.IGNORECASE))
 
 
-def ask_ollama(history, text, on_sentence=None, stop=None):
+def ask_ollama(history, text, on_sentence=None, stop=None, information=None):
     if stop and stop.is_set():
         return '', history
     messages = (history + [{'role': 'user', 'content': text}])[-12:]
-    immediate = local_reply(text)
+    immediate = local_reply(text) or (information or LiveInformation()).answer(text)
     if immediate:
         if on_sentence and not (stop and stop.is_set()):
             on_sentence(immediate)
@@ -101,6 +102,7 @@ class VoiceWorker:
         self.speaker_lock = threading.Lock()
         self.input_problem = threading.Event()
         self.stream = None
+        self.information = LiveInformation()
 
     def emit(self, title, detail=''):
         self.events.put((self.token, title, detail))
@@ -135,21 +137,22 @@ class VoiceWorker:
     def say(self, text):
         if self.stop.is_set():
             return
-        with self.speaker_lock:
-            if self.stop.is_set():
+        with speech_command(text,self.stop,self.emit) as (command,stdin):
+            if not command or self.stop.is_set():
                 return
-            self.speaker = subprocess.Popen(['espeak-ng', '-v', speech_voice(text), '-s', '165', '--stdin'],
-                                            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
-                                            stderr=subprocess.DEVNULL)
-            process = self.speaker
-        try:
-            process.communicate(text.encode(), timeout=180)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.communicate()
-            raise RuntimeError('Speech playback timed out. Check your audio output.')
-        if not self.stop.is_set() and process.returncode:
-            raise RuntimeError('Speech playback failed. Check your audio output.')
+            with self.speaker_lock:
+                if self.stop.is_set():
+                    return
+                self.speaker = subprocess.Popen(command,stdin=subprocess.PIPE if stdin else subprocess.DEVNULL,
+                                                stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+                process = self.speaker
+            try:
+                process.communicate(stdin,timeout=180)
+            except subprocess.TimeoutExpired:
+                process.kill();process.communicate()
+                raise RuntimeError('Speech playback timed out. Check your audio output.')
+            if not self.stop.is_set() and process.returncode:
+                raise RuntimeError('Speech playback failed. Check your audio output.')
 
     def run(self):
         try:
@@ -162,7 +165,7 @@ class VoiceWorker:
             SetLogLevel(-1)
             self.emit('Loading local voice recognition…', 'Your microphone is not open yet.')
             model = Model(str(VOICE_MODEL))
-            self.emit('Loading multilingual speech…', 'Preparing local English and Telugu recognition.')
+            self.emit('Loading multilingual speech…', 'Preparing local English speech recognition.')
             speech = SpeechInput()
             device = os.getenv('ANDY_INPUT_DEVICE')
             if device and device.isdecimal():
@@ -205,13 +208,13 @@ class VoiceWorker:
                             recorded.clear()
                             waiting = False
                             deadline = time.monotonic() + 30
-                            self.emit('Listening to your question…', 'Speak in English or Telugu; pause when finished.')
+                            self.emit('Listening to your question…', 'Speak naturally in English; pause when finished.')
                     else:
                         recorded.extend(data)
                         # Vosk supplies only the speech endpoint here, not the words.
                         if command.AcceptWaveform(data):
                             command.Result()
-                            self.emit('Understanding your words…', 'Transcribing English or Telugu locally.')
+                            self.emit('Understanding your words…', 'Transcribing your English question locally.')
                             transcript = speech.transcribe(bytes(recorded), rate)
                             recorded.clear()
                             if self.stop.is_set():
@@ -230,13 +233,13 @@ class VoiceWorker:
                                 self.say(sentence)
                             try:
                                 answer, updated_history = ask_ollama(
-                                    self.history, text, on_sentence=speak_sentence, stop=self.stop)
+                                    self.history, text, on_sentence=speak_sentence, stop=self.stop, information=self.information)
                                 if self.stop.is_set():
                                     break
                                 self.history = updated_history
                             except RuntimeError as exc:
                                 self.emit('Ollama unavailable', str(exc))
-                                self.say('I could not reach the model. Please check Ollama. You can still ask me the time or date.')
+                                self.say('I could not reach the model. Please check Ollama. Time, weather, and news use separate services.')
                             self.clear_audio()
                             recorded.clear()
                             waiting = True
@@ -427,6 +430,11 @@ def main():
             pause_action.setEnabled(running and self.mode != 'paused')
             pause_action.triggered.connect(self.pause)
             menu.addAction(pause_action)
+            if self.worker and self.worker.information.sources:
+                import webbrowser
+                sources=menu.addMenu('Sources for latest live answer')
+                for label,url in self.worker.information.sources:
+                    sources.addAction(label,lambda checked=False,link=url:webbrowser.open(link))
             menu.addSeparator()
             menu.addAction('Quit Andy', self.close)
             menu.exec(event.globalPos())

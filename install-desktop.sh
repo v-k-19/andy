@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+if ! command -v mpv >/dev/null 2>&1; then
+  echo 'For the soft female neural voice, first install playback support: sudo pacman -S mpv'
+fi
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements-desktop.txt
 .venv/bin/python download_voice_model.py

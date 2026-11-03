@@ -22,7 +22,7 @@ class SpeechInput:
         from faster_whisper import WhisperModel
         if not (MODEL_PATH / 'model.bin').is_file():
             raise RuntimeError('Multilingual speech model is missing. Run bash install-desktop.sh first.')
-        self.language = os.getenv('ANDY_SPEECH_LANGUAGE', 'auto')
+        self.language = os.getenv('ANDY_SPEECH_LANGUAGE', 'en')
         if self.language not in ('auto', 'en', 'te'):
             raise RuntimeError('ANDY_SPEECH_LANGUAGE must be auto, en, or te.')
         self.model = WhisperModel(str(MODEL_PATH), device='cpu', compute_type='int8',
