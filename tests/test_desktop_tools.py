@@ -69,6 +69,20 @@ class ToolTests(unittest.TestCase):
         self.assertIn('could not start audio',answer)
         self.assertIsNone(self.tools.process)
 
+    def test_player_stdout_error_is_captured_and_media_url_redacted(self):
+        def fail(arguments,**kwargs):
+            kwargs['stdout'].write(b'[ytdl_hook] ERROR: HTTP Error 403: Forbidden https://media.example/path?token=temporary\n')
+            process=Mock();process.poll.return_value=2;process.returncode=2
+            return process
+        with patch('desktop_tools.shutil.which',return_value='/usr/bin/mpv'),patch('desktop_tools.subprocess.Popen',side_effect=fail) as start:
+            self.tools.playback('ytdl://https://www.youtube.com/watch?v=abcdefghijk')
+        self.assertIn('403: Forbidden',self.tools.last_error)
+        self.assertIn('exit code 2',self.tools.last_error)
+        self.assertNotIn('token=temporary',self.tools.last_error)
+        self.assertIs(start.call_args.kwargs['stderr'],__import__('subprocess').STDOUT)
+        self.assertNotIn('--no-terminal',start.call_args.args[0])
+        self.assertNotIn('--really-quiet',start.call_args.args[0])
+
     def test_player_success_requires_audio_params(self):
         with patch('desktop_tools.shutil.which',return_value='/usr/bin/mpv'),patch('desktop_tools.subprocess.Popen') as run,patch.object(self.tools,'player_request',return_value={'samplerate':48000}):
             run.return_value.poll.return_value=None

@@ -17,6 +17,11 @@ def main():
     for program in ('mpv','yt-dlp','deno'):
         path=shutil.which(program)
         print(program+': '+(path or 'NOT FOUND'))
+        if path:
+            try:
+                version=subprocess.run([path,'--version'],capture_output=True,text=True,timeout=3).stdout.splitlines()
+                if version:print('  Version:',version[0])
+            except (OSError,subprocess.TimeoutExpired):pass
         if not path and program in ('mpv','yt-dlp'):ready=False
     if not ready:
         print('Install missing programs with: sudo pacman -S mpv yt-dlp deno')

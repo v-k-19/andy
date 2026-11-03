@@ -124,7 +124,7 @@ To test search and playback together:
 .venv/bin/python check_music.py --play "song name and artist"
 ```
 
-The test shows dependency paths and provider/player failure details; press Enter to stop test playback. Source searches and player startup each have a 20-second timeout. Provider sign-in requirements or blocks are reported rather than bypassed.
+The test shows dependency paths and versions, the player exit code, and combined player/provider error output. Media URLs are redacted from player errors. The player explicitly enables warning/error output even without a terminal, so failures are not silently discarded; press Enter to stop test playback. Source searches and player startup each have a 20-second timeout. Provider sign-in requirements or blocks are reported rather than bypassed.
 
 Local music searches `~/Music` (up to 10,000 directory entries), matches song/artist text against file paths, and plays supported audio files without uploading them. Matching tracks form a local queue for “Next track.” Online search selects one track; “Next track” does not create an online playlist. To use a different local folder:
 

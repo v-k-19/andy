@@ -25,6 +25,12 @@ SITES={'youtube':'https://www.youtube.com','google':'https://www.google.com',
        'spotify':'https://open.spotify.com','youtube music':'https://music.youtube.com'}
 
 
+def player_error_text(log):
+    log=re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', log)
+    log=re.sub(r'https?://[^\s]+','<media URL>',log)
+    return '\n'.join(line.strip() for line in log.splitlines() if line.strip())[-1800:]
+
+
 class DesktopTools:
     def __init__(self):
         self.process=None;self.queue=[];self.index=0
@@ -75,17 +81,20 @@ class DesktopTools:
         try:
             Path(self.socket_path).unlink(missing_ok=True)
             self.player_log=TemporaryFile()
-            self.process=subprocess.Popen(['mpv','--no-config','--no-video','--really-quiet','--no-terminal',
-                '--input-ipc-server='+self.socket_path,'--ytdl-format=bestaudio/best','--volume=45','--',target],
-                stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=self.player_log)
+            self.process=subprocess.Popen(['mpv','--no-config','--no-video','--terminal=yes','--input-terminal=no','--msg-level=all=warn',
+                '--input-ipc-server='+self.socket_path,'--ytdl-format=bestaudio/best','--ytdl-raw-options=ignore-config=','--volume=45','--',target],
+                stdin=subprocess.DEVNULL,stdout=self.player_log,stderr=subprocess.STDOUT)
             deadline=time.monotonic()+20
             while time.monotonic()<deadline:
                 if self.closed or (stop and stop.is_set()):
                     self.stop_music();return 'Music request cancelled.'
                 if self.process.poll() is not None:
-                    self.player_log.seek(0)
-                    details=self.player_log.read(4000).decode(errors='replace')
-                    self.last_error='Player exited before audio started. '+details[-1000:]
+                    exit_code=self.process.returncode
+                    self.player_log.seek(0,os.SEEK_END)
+                    end=self.player_log.tell()
+                    self.player_log.seek(max(0,end-6000))
+                    details=player_error_text(self.player_log.read().decode(errors='replace'))
+                    self.last_error=f'Player exited before audio started (exit code {exit_code}). '+(details or 'mpv did not provide an error message.')
                     self.stop_music()
                     return 'The music player could not start audio from that source. Try another song or open YouTube in your browser. Run check_music.py for details.'
                 try:
