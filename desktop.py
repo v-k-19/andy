@@ -43,7 +43,7 @@ def ask_ollama(history, text, on_sentence=None, stop=None, information=None, too
         return '', history
     messages = (history + [{'role': 'user', 'content': text}])[-12:]
     information=information or LiveInformation()
-    immediate=(tools.handle(text) if tools else None) or local_reply(text) or information.answer(text)
+    immediate=(tools.handle(text,stop=stop) if tools else None) or local_reply(text) or information.answer(text)
     if immediate:
         if on_sentence and not (stop and stop.is_set()):
             on_sentence(immediate)

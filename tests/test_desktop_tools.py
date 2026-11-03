@@ -29,13 +29,50 @@ class ToolTests(unittest.TestCase):
             self.tools.handle('Open YouTube')
             browser.assert_called_once_with('https://www.youtube.com')
 
-    def test_online_music_query_is_data_not_a_shell_command(self):
-        with patch('desktop_tools.shutil.which',return_value='/usr/bin/program'),patch('desktop_tools.subprocess.Popen') as run:
+    def test_online_music_resolves_actual_track_before_playback(self):
+        metadata=Mock(stdout='{"entries":[{"id":"abcdefghijk","title":"Relaxing track"}]}')
+        with patch('desktop_tools.shutil.which',return_value='/usr/bin/program'),patch('desktop_tools.subprocess.run',return_value=metadata) as search,patch.object(self.tools,'playback',return_value=None) as play:
+            answer=self.tools.handle('Can you please play the song relaxing music on YouTube?')
+        self.assertEqual(search.call_args.args[0][-1],'ytsearch1:relaxing music')
+        self.assertNotIn('shell',search.call_args.kwargs)
+        play.assert_called_once_with('ytdl://https://www.youtube.com/watch?v=abcdefghijk',stop=None)
+        self.assertIn('audio player has started',answer)
+
+    def test_reported_song_request_routes_to_music_without_llm(self):
+        with patch.object(self.tools,'play_online',return_value='Audio ready') as play,patch.object(desktop,'build_opener') as model:
+            answer,_=desktop.ask_ollama([], 'play majboor song by zoya wassem',tools=self.tools)
+            play.assert_called_once()
+            self.assertEqual(play.call_args.args[0],'majboor song by zoya wassem')
+            model.assert_not_called()
+        self.assertEqual(answer,'Audio ready')
+
+    def test_polite_music_requests_do_not_fall_through_to_model(self):
+        for phrase in ['Can you play Imagine?', 'I want to listen to Imagine', 'Please put on Imagine', 'Find and play Imagine', 'Andy, could you play Imagine?']:
+            with patch.object(self.tools,'play_online',return_value='Playback ready') as play:
+                self.assertEqual(self.tools.handle(phrase),'Playback ready')
+                play.assert_called_once_with('Imagine',stop=None)
+
+    def test_search_failure_never_claims_playback(self):
+        import subprocess
+        error=subprocess.CalledProcessError(1,['yt-dlp'],stderr='Source unavailable')
+        with patch('desktop_tools.shutil.which',return_value='/usr/bin/program'),patch('desktop_tools.subprocess.run',side_effect=error),patch.object(self.tools,'playback') as play:
+            answer=self.tools.handle('Play Imagine')
+            play.assert_not_called()
+        self.assertIn('could not complete',answer)
+        self.assertNotIn('has started',answer)
+        self.assertIn('Source unavailable',self.tools.last_error)
+
+    def test_player_exit_is_reported_instead_of_success(self):
+        with patch('desktop_tools.shutil.which',return_value='/usr/bin/mpv'),patch('desktop_tools.subprocess.Popen') as run:
+            run.return_value.poll.return_value=1
+            answer=self.tools.playback('ytdl://https://www.youtube.com/watch?v=abcdefghijk')
+        self.assertIn('could not start audio',answer)
+        self.assertIsNone(self.tools.process)
+
+    def test_player_success_requires_audio_params(self):
+        with patch('desktop_tools.shutil.which',return_value='/usr/bin/mpv'),patch('desktop_tools.subprocess.Popen') as run,patch.object(self.tools,'player_request',return_value={'samplerate':48000}):
             run.return_value.poll.return_value=None
-            answer=self.tools.handle('Play online relaxing music')
-            self.assertEqual(run.call_args.args[0][-1],'ytdl://ytsearch1:relaxing music')
-            self.assertNotIn('shell',run.call_args.kwargs)
-            self.assertIn('Starting',answer)
+            self.assertIsNone(self.tools.playback('local-file.mp3'))
 
     def test_local_music_stays_in_configured_folder(self):
         with TemporaryDirectory() as folder:

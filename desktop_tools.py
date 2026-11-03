@@ -6,7 +6,8 @@ import re
 import shutil
 import socket
 import subprocess
-from tempfile import TemporaryDirectory
+import time
+from tempfile import TemporaryDirectory,TemporaryFile
 from urllib.parse import urlencode
 import webbrowser
 from web_tools import public_url
@@ -27,6 +28,7 @@ SITES={'youtube':'https://www.youtube.com','google':'https://www.google.com',
 class DesktopTools:
     def __init__(self):
         self.process=None;self.queue=[];self.index=0
+        self.player_log=None;self.last_error=None;self.closed=False
         self.ipc=TemporaryDirectory(prefix='andy-music-')
         self.socket_path=str(Path(self.ipc.name)/'player.sock')
 
@@ -43,19 +45,89 @@ class DesktopTools:
             try:self.process.wait(timeout=2)
             except subprocess.TimeoutExpired:self.process.kill();self.process.wait(timeout=2)
         self.process=None
+        if self.player_log:
+            self.player_log.close();self.player_log=None
 
-    def close(self):self.stop_music();self.ipc.cleanup()
+    def close(self):
+        self.closed=True;self.stop_music();self.ipc.cleanup()
 
-    def playback(self,target):
+    def player_request(self,command,timeout=.4):
+        with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as channel:
+            channel.settimeout(timeout);channel.connect(self.socket_path)
+            channel.sendall((json.dumps({'command':command,'request_id':1})+'\n').encode())
+            data=b''
+            while len(data)<65536:
+                chunk=channel.recv(4096)
+                if not chunk:break
+                data+=chunk
+                while b'\n' in data:
+                    line,data=data.split(b'\n',1)
+                    result=json.loads(line)
+                    if result.get('request_id')==1:
+                        return result.get('data') if result.get('error')=='success' else None
+        return None
+
+    def playback(self,target,stop=None):
+        if self.closed or (stop and stop.is_set()):return 'Music request cancelled.'
         if not shutil.which('mpv'):return 'Install mpv to play music.'
         self.stop_music()
+        self.last_error=None
         try:
             Path(self.socket_path).unlink(missing_ok=True)
-            self.process=subprocess.Popen(['mpv','--no-video','--really-quiet','--no-terminal',
+            self.player_log=TemporaryFile()
+            self.process=subprocess.Popen(['mpv','--no-config','--no-video','--really-quiet','--no-terminal',
                 '--input-ipc-server='+self.socket_path,'--ytdl-format=bestaudio/best','--volume=45','--',target],
-                stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-            return None
-        except OSError:return 'I could not start the music player. Check that mpv is installed.'
+                stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=self.player_log)
+            deadline=time.monotonic()+20
+            while time.monotonic()<deadline:
+                if self.closed or (stop and stop.is_set()):
+                    self.stop_music();return 'Music request cancelled.'
+                if self.process.poll() is not None:
+                    self.player_log.seek(0)
+                    details=self.player_log.read(4000).decode(errors='replace')
+                    self.last_error='Player exited before audio started. '+details[-1000:]
+                    self.stop_music()
+                    return 'The music player could not start audio from that source. Try another song or open YouTube in your browser. Run check_music.py for details.'
+                try:
+                    if self.player_request(['get_property','audio-params']):return None
+                except (OSError,ValueError):pass
+                time.sleep(.15)
+            self.last_error='No audio decoder became ready within 20 seconds.'
+            self.stop_music()
+            return 'The music source did not start within twenty seconds. Please try again or choose another song.'
+        except OSError:
+            self.stop_music()
+            self.last_error='Could not start mpv.'
+            return 'I could not start the music player. Check that mpv is installed.'
+
+    def play_online(self,query,stop=None):
+        if not shutil.which('yt-dlp') or not shutil.which('mpv'):
+            return 'Install yt-dlp and mpv for online music playback.'
+        self.last_error=None
+        try:
+            search=subprocess.run(['yt-dlp','--ignore-config','--dump-single-json','--flat-playlist','--skip-download',
+                                   '--no-warnings','--playlist-end','1','--','ytsearch1:'+query[:250]],
+                                  capture_output=True,text=True,timeout=20,check=True)
+            result=json.loads(search.stdout)
+            if not isinstance(result,dict):raise ValueError('Invalid music search response')
+            entries=result.get('entries') or []
+            if not isinstance(entries,list):raise ValueError('Invalid music results')
+            if not entries:return 'I could not find an online track for that request. Try the song and artist together.'
+            entry=entries[0]
+            if not isinstance(entry,dict):raise ValueError('Invalid music result')
+            video=entry.get('id','')
+            if not isinstance(video,str) or not re.fullmatch(r'[A-Za-z0-9_-]{11}',video):
+                raise ValueError('No usable YouTube video ID')
+            title=' '.join(str(entry.get('title') or query).split())[:140]
+            if self.closed or (stop and stop.is_set()):return 'Music request cancelled.'
+            self.queue=[]
+            error=self.playback('ytdl://https://www.youtube.com/watch?v='+video,stop=stop)
+            return error or 'The audio player has started '+title+'.'
+        except subprocess.CalledProcessError as error:
+            self.last_error='Online search failed: '+str(error.stderr or '')[-1000:]
+        except (OSError,ValueError,subprocess.TimeoutExpired) as error:
+            self.last_error='Online search failed: '+type(error).__name__
+        return 'I could not complete the online music search. The source may be blocked or yt-dlp may need updating. Run check_music.py to check it.'
 
     def pause_music(self,pause):
         if not self.process or self.process.poll() is not None:return 'No music is currently running in Andy’s player.'
@@ -84,8 +156,10 @@ class DesktopTools:
         error=self.playback(str(self.queue[0]))
         return error or 'Starting local track: '+self.queue[0].stem+'.'
 
-    def handle(self,text):
-        command=re.sub(r'^(?:hey\s+)?andy[,.]?\s+|^please\s+','',text.strip(),flags=re.I).strip(' .!?')
+    def handle(self,text,stop=None):
+        if self.closed or (stop and stop.is_set()):return 'Request cancelled.'
+        command=re.sub(r"^(?:(?:hey\s+)?andy[,.]?\s+|please\s+|(?:can|could|would|will) you\s+|(?:i would|id|i'd) like (?:you )?to\s+|i want (?:you )?to\s+)+",'',text.strip(),flags=re.I).strip(' .!?')
+        command=re.sub(r'^(?:put on|find and play|listen to)\s+','play ',command,flags=re.I)
         lower=command.lower()
         if lower in ('pause music','pause the music','pause song'):return self.pause_music(True)
         if lower in ('resume music','resume the music','continue music'):return self.pause_music(False)
@@ -100,12 +174,11 @@ class DesktopTools:
         if local:return self.play_local(re.sub(r'^(?:songs?|files?)\s+','',local[1] or '',flags=re.I))
         play=re.match(r'play(?: me)?(?: online)?\s+(.+)',command,re.I)
         if play:
-            query=play[1]
+            query=re.sub(r'^(?:the )?(?:song|track)(?: called| named)?\s+','',play[1],flags=re.I)
+            query=re.sub(r'\s+(?:on|from) (?:youtube|youtube music|the internet|online)(?: please)?$','',query,flags=re.I)
+            query=re.sub(r'\s+please$','',query,flags=re.I).strip()
             if query.lower() in ('music','some music','a song'):query='relaxing music'
-            if not shutil.which('yt-dlp'):return 'Install yt-dlp and mpv for online music playback.'
-            self.queue=[]
-            error=self.playback('ytdl://ytsearch1:'+query[:250])
-            return error or 'Starting an online music search for '+query+'. Playback depends on the source being available.'
+            return self.play_online(query,stop=stop)
         opening=re.fullmatch(r'(?:open|launch|start)\s+(.+)',command,re.I)
         if not opening:return None
         target=opening[1].lower().strip()

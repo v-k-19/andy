@@ -110,7 +110,21 @@ These commands are handled directly from your speech in the **native desktop app
 
 Website commands open the PC's normal browser. App launch requests use a small set of known executables and fixed argument lists; they do not run model-generated commands or arbitrary shell strings. Unknown apps are reported as unsupported. Opening a terminal does not run commands inside it. These desktop actions are not exposed by the browser API.
 
-Online music uses mpv and yt-dlp to search for a public online track and start playback. It requires internet access, yt-dlp (with a supported JavaScript runtime such as Deno for sources that require it), and depends on source availability; a startup announcement confirms the player launch, not successful playback. No login, DRM bypass, or downloading a permanent music library is implemented. If playback fails, update yt-dlp, try another track, or open YouTube/Spotify in your browser.
+Online music first uses yt-dlp to find a concrete YouTube video, then starts mpv for that URL. It announces startup only after mpv exposes an active audio decoder. That confirms player readiness, not that your speakers are audible. It requires internet access, yt-dlp (with a supported JavaScript runtime such as Deno for sources that require it), and depends on source availability; source failures are reported instead of announcing that the song is playing. No login, DRM bypass, or downloading a permanent music library is implemented. If playback fails, update yt-dlp, try another track, or open YouTube/Spotify in your browser. Polite phrases such as “Can you play…”, “Please put on…”, and “I want to listen to…” route directly to music tools.
+
+To diagnose search without playing anything:
+
+```bash
+.venv/bin/python check_music.py "song name and artist"
+```
+
+To test search and playback together:
+
+```bash
+.venv/bin/python check_music.py --play "song name and artist"
+```
+
+The test shows dependency paths and provider/player failure details; press Enter to stop test playback. Source searches and player startup each have a 20-second timeout. Provider sign-in requirements or blocks are reported rather than bypassed.
 
 Local music searches `~/Music` (up to 10,000 directory entries), matches song/artist text against file paths, and plays supported audio files without uploading them. Matching tracks form a local queue for “Next track.” Online search selects one track; “Next track” does not create an online playlist. To use a different local folder:
 
