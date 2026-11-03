@@ -4,6 +4,9 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 if ! command -v mpv >/dev/null 2>&1; then
   echo 'For the soft female neural voice, first install playback support: sudo pacman -S mpv'
 fi
+if ! command -v yt-dlp >/dev/null 2>&1; then
+  echo 'For online music playback, install: sudo pacman -S yt-dlp'
+fi
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements-desktop.txt
 .venv/bin/python download_voice_model.py

@@ -10,6 +10,7 @@ from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
 import xml.etree.ElementTree as ET
+from web_tools import WebTools
 
 
 WEATHER = {0:'clear skies',1:'mainly clear skies',2:'partly cloudy skies',3:'overcast skies',
@@ -20,10 +21,11 @@ WEATHER = {0:'clear skies',1:'mainly clear skies',2:'partly cloudy skies',3:'ove
            85:'snow showers',86:'heavy snow showers',95:'thunderstorms',96:'thunderstorms with hail',99:'thunderstorms with hail'}
 
 
-CAPABILITIES = ('I can answer questions, explain things, follow our recent conversation, tell '
-                'the time and date, fetch Hyderabad weather and forecasts, and read recent '
-                'news headlines. Weather, news, and the natural female voice need an internet '
-                'connection. I cannot control your apps or browse arbitrary websites.')
+CAPABILITIES = ('I can answer questions, search the web, read public pages, follow our conversation, '
+                'tell the time, check Hyderabad weather, and read news headlines. In the desktop '
+                'app I can open websites, launch supported apps, and play online or local music. '
+                'Online features need an internet connection. Ask me to search for a topic, '
+                'read the first result, open a website, or play a song.')
 
 
 def fetch(url, *, json_data=True):
@@ -51,10 +53,13 @@ class LiveInformation:
         self.city=os.getenv('ANDY_WEATHER_CITY','Hyderabad, India')
         self.sources=[]
         self.last_error=None
+        self.web=WebTools()
+        self.evidence=[]
 
     def answer(self,text):
         lower=text.lower().strip().replace('’', "'")
         self.last_error=None
+        self.evidence=[]
         question=re.sub(r'[^a-z0-9\s]', '', lower)
         question=re.sub(r'^(?:hey )?andy\s+', '', question)
         question=' '.join(question.split())
@@ -62,6 +67,11 @@ class LiveInformation:
                         'how can you help','how can you help me','what are your capabilities',
                         'what are your features','tell me what you can do','tell me about yourself'}:
             return CAPABILITIES
+        explicit=self.web.handle(text,explicit_only=True)
+        if explicit is not None:
+            self.sources=self.web.sources.copy()
+            self.evidence=explicit.evidence
+            return explicit.answer
         # Restrict the common speech homophone to weather-request phrases.
         lower=re.sub(r"\b(?:what'?s|what is|how'?s|how is|current|today'?s|tomorrow'?s)\s+(?:the\s+)?whether\b", 'weather', lower)
         weather_words=re.search(r'\b(weather|temperature|forecast|rain|raining)\b',lower)
@@ -77,6 +87,11 @@ class LiveInformation:
         if news_words and not re.search(r'\b(explain|define|meaning)\b',lower):
             self.sources=[]
             return self.retrieve('news',lower)
+        result=self.web.handle(text)
+        if result is not None:
+            self.sources=self.web.sources.copy()
+            self.evidence=result.evidence
+            return result.answer
         capabilities=re.search(r'\b(internet|online|external information|external tools|tools|web)\b',lower)
         asking=re.search(r'\b(can you|do you|are you able|have access|access to|what tools|your capabilities)\b',lower)
         if capabilities and asking:

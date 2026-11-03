@@ -5,7 +5,7 @@ Andy is a native Arch Linux desktop assistant with a transparent blue-white part
 ## Install on Arch Linux
 
 ```bash
-sudo pacman -Syu git python python-pip portaudio espeak-ng mpv ollama
+sudo pacman -Syu git python python-pip portaudio espeak-ng mpv yt-dlp deno xdg-utils ollama
 sudo systemctl enable --now ollama
 git clone https://github.com/v-k-19/andy.git
 cd andy
@@ -23,7 +23,7 @@ Close Andy, then open your existing project folder. If you followed this chat's 
 ```bash
 cd ~/andy-app
 git pull --ff-only
-sudo pacman -S mpv
+sudo pacman -S mpv yt-dlp deno xdg-utils
 bash install-desktop.sh
 .venv/bin/python desktop.py
 ```
@@ -81,7 +81,44 @@ For another default city:
 ANDY_WEATHER_CITY='Hyderabad, India' .venv/bin/python desktop.py
 ```
 
-General questions use Ollama's learned knowledge and recent conversation. Andy does **not** have unrestricted web browsing: live retrieval currently covers weather and news headlines. Other current facts need an additional information source.
+General questions use Ollama's learned knowledge and recent conversation. Say **“Search the web for …”** to explicitly look something up. Queries containing “latest,” “current,” stock prices or exchange rates also attempt a web search. Results are search snippets unless you ask Andy to read a result. Search providers may block or rate-limit automated access; a snippet alone does not establish that a fact is current or correct.
+
+## Web search and page reading
+
+Examples:
+
+- “Search the web for the latest Python release.”
+- “Look up how solar panels work.”
+- “Read the first result.”
+- “Summarize the second result.”
+- “Read https://example.com.”
+
+DDGS 9 searches DuckDuckGo/Brave without an API key. Queries go to the search providers. Up to three results, with source links, are supplied to the local model. Page reading fetches public HTML/text, excludes scripts and navigation, and limits the extracted text. Private-network URLs, login credentials in URLs, non-web protocols, nonstandard ports, unsupported content types and oversized pages are rejected. Pages requiring login, JavaScript or automated-access challenges may not be readable. The reader does not execute page scripts or follow instructions found on a page.
+
+Right-click **Sources for latest live answer** to inspect links. Web sources are treated as evidence, not commands, and are never passed to desktop action handlers. Ollama summarizes retrieved text; it can still make mistakes, so check important details against the linked sources. Search and page summaries need the local model to be running. “Read the first result” uses the last search in the current native listening session.
+
+## Websites, desktop apps, and music
+
+These commands are handled directly from your speech in the **native desktop app**:
+
+- “Open YouTube,” “Open GitHub,” or “Open example.com.”
+- “Open browser,” “Open terminal,” “Open calculator,” “Open text editor,” “Open settings,” “Open Firefox,” “Open Chromium,” or “Open VLC.” The requested app must be installed.
+- “Open file manager,” “Open downloads,” or “Open music folder.”
+- “Play online relaxing music” or “Play [song/artist].”
+- “Play local [song/artist]” or “Play local music.”
+- “Pause music,” “Resume music,” “Stop music,” or “Next track.”
+
+Website commands open the PC's normal browser. App launch requests use a small set of known executables and fixed argument lists; they do not run model-generated commands or arbitrary shell strings. Unknown apps are reported as unsupported. Opening a terminal does not run commands inside it. These desktop actions are not exposed by the browser API.
+
+Online music uses mpv and yt-dlp to search for a public online track and start playback. It requires internet access, yt-dlp (with a supported JavaScript runtime such as Deno for sources that require it), and depends on source availability; a startup announcement confirms the player launch, not successful playback. No login, DRM bypass, or downloading a permanent music library is implemented. If playback fails, update yt-dlp, try another track, or open YouTube/Spotify in your browser.
+
+Local music searches `~/Music` (up to 10,000 directory entries), matches song/artist text against file paths, and plays supported audio files without uploading them. Matching tracks form a local queue for “Next track.” Online search selects one track; “Next track” does not create an online playlist. To use a different local folder:
+
+```bash
+ANDY_MUSIC_DIR='/path/to/Music' .venv/bin/python desktop.py
+```
+
+Music has a separate player from the spoken voice. Pausing Andy's microphone does not pause music; use the music commands or quit the app to stop its player. When music is loud, wake-word accuracy can fall; reduce playback/output volume. Music playback and desktop interaction need testing on your actual PC.
 
 ## Transparent orb controls
 
@@ -93,7 +130,7 @@ General questions use Ollama's learned knowledge and recent conversation. Andy d
 
 There is no painted background panel. Transparency requires desktop compositing; most Wayland desktops provide it, while an X11 window manager may need compositing enabled. Rendering stops while minimized but listening continues. The orb must remain running to hear its wake word; it does not automatically start at login.
 
-Pause closes the microphone and stops audio playback. An active network or Ollama request may need to finish before listening can restart; model requests have a three-minute timeout. Neural synthesis has a 25-second timeout and checks for cancellation. Voice interruption during playback is not supported; click to pause instead. Restarting listening clears conversation context.
+Pause closes the microphone and stops Andy’s spoken reply; music is controlled separately. An active network or Ollama request may need to finish before listening can restart; model requests have a three-minute timeout. Neural synthesis has a 25-second timeout and checks for cancellation. Voice interruption during playback is not supported; click to pause instead. Restarting listening clears conversation context.
 
 ## Speech understanding and response speed
 
@@ -115,10 +152,10 @@ ANDY_SPEECH_MODEL=base .venv/bin/python desktop.py
 To test those connections without the microphone, voice, or Ollama, run this in your project folder:
 
 ```bash
-python3 check_online.py
+.venv/bin/python check_online.py
 ```
 
-It prints the project folder, Git version, separate Weather/News results, and a short error type when a provider fails. A failure may mean connectivity, rate limiting, unavailable or malformed data; it is not automatically evidence that your whole PC is offline. The browser API also routes weather/news questions through the live handlers.
+It prints the project folder, Git version, separate Weather/News/Web search results, and a short error type when a provider fails. A failure may mean connectivity, rate limiting, unavailable or malformed data; it is not automatically evidence that your whole PC is offline. The browser API also routes weather/news questions through the live handlers.
 
 ## Troubleshooting
 
@@ -135,7 +172,7 @@ It prints the project folder, Git version, separate Weather/News results, and a 
 
 Configuration variables are documented in `.env.example`. Set them in the environment before starting the app. Important options include `ANDY_MODEL`, `OLLAMA_URL`, `ANDY_WEATHER_CITY`, `ANDY_TTS_ENGINE`, `ANDY_TTS_VOICE`, `ANDY_TTS_RATE`, `ANDY_INPUT_DEVICE`, `ANDY_SPEECH_MODEL`, and `ANDY_SPEECH_LANGUAGE` (default `en`).
 
-Microphone audio and conversation context stay in memory, with no saved recordings or transcripts. After initial model downloads, recognition runs offline. General conversation is sent to the configured Ollama server; the default is local. Female neural speech sends reply text to Microsoft. Weather sends city/coordinates to Open-Meteo; news sends search topics to Google News. Temporary synthesized audio is removed after playback. Andy cannot access files/apps, send messages, or schedule background actions.
+Microphone audio and conversation context stay in memory, with no saved recordings or transcripts. After initial model downloads, recognition runs offline. General conversation is sent to the configured Ollama server; the default is local. Female neural speech sends reply text to Microsoft. Weather sends city/coordinates to Open-Meteo; news sends search topics to Google News. Temporary synthesized audio is removed after playback. Web search sends query text to search providers; page reading requests public pages and supplies extracted text to the configured Ollama server. Desktop tools can launch supported apps and inspect/play audio in your configured Music folder. They do not send messages or create scheduled actions.
 
 The earlier browser interface remains available with `python3 server.py` and http://127.0.0.1:8000. It uses browser speech features; the native soft voice and live-source menu described here belong to `desktop.py`; weather/news routing also works through the browser API.
 
@@ -143,10 +180,10 @@ The earlier browser interface remains available with `python3 server.py` and htt
 
 ```bash
 python3 -m unittest discover -s tests -v
-python3 -m py_compile desktop.py voice_output.py live_information.py speech_input.py
+python3 -m py_compile desktop.py voice_output.py live_information.py speech_input.py web_tools.py desktop_tools.py
 bash -n install-desktop.sh
 ```
 
 Automated tests cover source parsing, stale data, offline failures, temporary audio, cancellation, and conversation flow. Live network providers, neural voice sound, and physical microphone playback need verification on your PC; the cloud workspace does not permit these provider endpoints.
 
-Sources: [edge-tts](https://github.com/rany2/edge-tts), [Microsoft voice support](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/language-support), [Open-Meteo](https://open-meteo.com/en/docs), [Geocoding API](https://open-meteo.com/en/docs/geocoding-api), [faster-whisper](https://github.com/SYSTRAN/faster-whisper), [Gemma 3](https://ollama.com/library/gemma3).
+Sources: [edge-tts](https://github.com/rany2/edge-tts), [Microsoft voice support](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/language-support), [Open-Meteo](https://open-meteo.com/en/docs), [Geocoding API](https://open-meteo.com/en/docs/geocoding-api), [faster-whisper](https://github.com/SYSTRAN/faster-whisper), [Gemma 3](https://ollama.com/library/gemma3), [DDGS](https://github.com/deedy5/ddgs), [mpv](https://mpv.io/manual/master/), [yt-dlp](https://github.com/yt-dlp/yt-dlp).

@@ -30,7 +30,7 @@ class LiveTests(unittest.TestCase):
             answer=LiveInformation().answer('Can you access external information and tools?')
             internet.assert_not_called()
         self.assertIn('weather',answer)
-        self.assertIn('cannot control',answer)
+        self.assertIn('supported apps',answer)
 
     def test_natural_weather_phrasing_and_speech_homophone_route(self):
         for question in ['How hot is it outside?', "What's the whether in Hyderabad?", 'Do I need an umbrella?']:
