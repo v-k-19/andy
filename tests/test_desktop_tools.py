@@ -35,8 +35,32 @@ class ToolTests(unittest.TestCase):
             answer=self.tools.handle('Can you please play the song relaxing music on YouTube?')
         self.assertEqual(search.call_args.args[0][-1],'ytsearch1:relaxing music')
         self.assertNotIn('shell',search.call_args.kwargs)
-        play.assert_called_once_with('ytdl://https://www.youtube.com/watch?v=abcdefghijk',stop=None)
+        self.assertEqual(play.call_args.args,('-',))
+        self.assertEqual(play.call_args.kwargs['media_command'][-1],'https://www.youtube.com/watch?v=abcdefghijk')
+        self.assertIn('--output',play.call_args.kwargs['media_command'])
         self.assertIn('audio player has started',answer)
+
+    def test_youtube_403_opens_selected_watch_page_without_claiming_audio(self):
+        metadata=Mock(stdout='{"entries":[{"id":"abcdefghijk","title":"Selected song"}]}')
+        def refused(*args,**kwargs):
+            self.tools.last_error='HTTP error 403 Forbidden'
+            return 'Direct playback failed.'
+        with patch('desktop_tools.shutil.which',return_value='/usr/bin/program'),patch('desktop_tools.subprocess.run',return_value=metadata),patch.object(self.tools,'playback',side_effect=refused),patch('desktop_tools.webbrowser.open',return_value=True) as browser:
+            answer=self.tools.play_online('Selected song')
+        browser.assert_called_once_with('https://www.youtube.com/watch?v=abcdefghijk&autoplay=1')
+        self.assertIn('refused direct audio',answer)
+        self.assertIn('Press Play',answer)
+        self.assertNotIn('audio player has started',answer)
+        self.assertIn('browser',self.tools.handle('Stop music'))
+        self.assertNotIn('stopped',self.tools.handle('Stop music'))
+
+    def test_streaming_player_cleanup_terminates_downloader(self):
+        self.tools.downloader=Mock();self.tools.downloader.poll.return_value=None
+        downloader=self.tools.downloader
+        self.tools.stop_music()
+        downloader.terminate.assert_called_once()
+        downloader.stdout.close.assert_called_once()
+        self.assertIsNone(self.tools.downloader)
 
     def test_reported_song_request_routes_to_music_without_llm(self):
         with patch.object(self.tools,'play_online',return_value='Audio ready') as play,patch.object(desktop,'build_opener') as model:

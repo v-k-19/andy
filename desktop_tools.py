@@ -34,7 +34,8 @@ def player_error_text(log):
 class DesktopTools:
     def __init__(self):
         self.process=None;self.queue=[];self.index=0
-        self.player_log=None;self.last_error=None;self.closed=False
+        self.player_log=None;self.download_log=None;self.downloader=None
+        self.last_error=None;self.closed=False;self.browser_music=False
         self.ipc=TemporaryDirectory(prefix='andy-music-')
         self.socket_path=str(Path(self.ipc.name)/'player.sock')
 
@@ -51,6 +52,15 @@ class DesktopTools:
             try:self.process.wait(timeout=2)
             except subprocess.TimeoutExpired:self.process.kill();self.process.wait(timeout=2)
         self.process=None
+        if self.downloader:
+            if self.downloader.poll() is None:
+                self.downloader.terminate()
+                try:self.downloader.wait(timeout=2)
+                except subprocess.TimeoutExpired:self.downloader.kill();self.downloader.wait(timeout=2)
+            if self.downloader.stdout:self.downloader.stdout.close()
+            self.downloader=None
+        if self.download_log:
+            self.download_log.close();self.download_log=None
         if self.player_log:
             self.player_log.close();self.player_log=None
 
@@ -73,17 +83,24 @@ class DesktopTools:
                         return result.get('data') if result.get('error')=='success' else None
         return None
 
-    def playback(self,target,stop=None):
+    def playback(self,target,stop=None,media_command=None):
         if self.closed or (stop and stop.is_set()):return 'Music request cancelled.'
         if not shutil.which('mpv'):return 'Install mpv to play music.'
         self.stop_music()
+        self.browser_music=False
         self.last_error=None
         try:
             Path(self.socket_path).unlink(missing_ok=True)
             self.player_log=TemporaryFile()
+            source=subprocess.DEVNULL
+            if media_command:
+                self.download_log=TemporaryFile()
+                self.downloader=subprocess.Popen(media_command,stdout=subprocess.PIPE,stderr=self.download_log)
+                source=self.downloader.stdout
             self.process=subprocess.Popen(['mpv','--no-config','--no-video','--terminal=yes','--input-terminal=no','--msg-level=all=warn',
                 '--input-ipc-server='+self.socket_path,'--ytdl-format=bestaudio/best','--ytdl-raw-options=ignore-config=','--volume=45','--',target],
-                stdin=subprocess.DEVNULL,stdout=self.player_log,stderr=subprocess.STDOUT)
+                stdin=source,stdout=self.player_log,stderr=subprocess.STDOUT)
+            if self.downloader and self.downloader.stdout:self.downloader.stdout.close()
             deadline=time.monotonic()+20
             while time.monotonic()<deadline:
                 if self.closed or (stop and stop.is_set()):
@@ -94,6 +111,10 @@ class DesktopTools:
                     end=self.player_log.tell()
                     self.player_log.seek(max(0,end-6000))
                     details=player_error_text(self.player_log.read().decode(errors='replace'))
+                    if self.download_log:
+                        self.download_log.seek(0,os.SEEK_END)
+                        end=self.download_log.tell();self.download_log.seek(max(0,end-6000))
+                        details+='\nyt-dlp: '+player_error_text(self.download_log.read().decode(errors='replace'))
                     self.last_error=f'Player exited before audio started (exit code {exit_code}). '+(details or 'mpv did not provide an error message.')
                     self.stop_music()
                     return 'The music player could not start audio from that source. Try another song or open YouTube in your browser. Run check_music.py for details.'
@@ -130,7 +151,17 @@ class DesktopTools:
             title=' '.join(str(entry.get('title') or query).split())[:140]
             if self.closed or (stop and stop.is_set()):return 'Music request cancelled.'
             self.queue=[]
-            error=self.playback('ytdl://https://www.youtube.com/watch?v='+video,stop=stop)
+            watch='https://www.youtube.com/watch?v='+video
+            media=['yt-dlp','--ignore-config','--no-playlist','--no-progress','--format','bestaudio/best','--output','-','--',watch]
+            error=self.playback('-',stop=stop,media_command=media)
+            if error and not self.closed and not (stop and stop.is_set()):
+                refused=re.search(r'403|forbidden|sign.?in|not available|not a bot',self.last_error or '',re.I)
+                if refused:
+                    try:opened=webbrowser.open(watch+'&autoplay=1')
+                    except Exception:opened=False
+                    if opened:
+                        self.browser_music=True
+                        return 'YouTube refused direct audio playback. I opened the selected song in your browser. Press Play there if it does not start. Browser playback uses its own controls.'
             return error or 'The audio player has started '+title+'.'
         except subprocess.CalledProcessError as error:
             self.last_error='Online search failed: '+str(error.stderr or '')[-1000:]
@@ -139,6 +170,7 @@ class DesktopTools:
         return 'I could not complete the online music search. The source may be blocked or yt-dlp may need updating. Run check_music.py to check it.'
 
     def pause_music(self,pause):
+        if self.browser_music:return 'That song was opened in your browser. Please use the playback controls on its YouTube page.'
         if not self.process or self.process.poll() is not None:return 'No music is currently running in Andy’s player.'
         try:
             with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as channel:
@@ -173,6 +205,7 @@ class DesktopTools:
         if lower in ('pause music','pause the music','pause song'):return self.pause_music(True)
         if lower in ('resume music','resume the music','continue music'):return self.pause_music(False)
         if lower in ('stop music','stop the music','stop song'):
+            if self.browser_music:return 'That song was opened in your browser. Please use the playback controls on its YouTube page.'
             self.stop_music();return 'Andy’s music player is stopped.'
         if lower in ('next song','next track','skip song'):
             if self.index+1>=len(self.queue):return 'There is no next local track. Ask me to play another song.'
