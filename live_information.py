@@ -24,6 +24,8 @@ WEATHER = {0:'clear skies',1:'mainly clear skies',2:'partly cloudy skies',3:'ove
 CAPABILITIES = ('I can answer questions, search the web, read public pages, follow our conversation, '
                 'tell the time, check Hyderabad weather, and read news headlines. In the desktop '
                 'app I can open websites, launch supported apps, and play online or local music. '
+                'The desktop app also supports local notes, to-dos, timers and reminders while it runs, '
+                'plus optional cloud AI for technical questions after an API key is configured. '
                 'Online features need an internet connection. Ask me to search for a topic, '
                 'read the first result, open a website, or play a song.')
 

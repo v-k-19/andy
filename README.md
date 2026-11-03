@@ -5,7 +5,7 @@ Andy is a native Arch Linux desktop assistant with a transparent blue-white part
 ## Install on Arch Linux
 
 ```bash
-sudo pacman -Syu git python python-pip portaudio espeak-ng mpv yt-dlp deno xdg-utils ollama
+sudo pacman -Syu git python python-pip portaudio espeak-ng mpv yt-dlp deno xdg-utils libnotify ollama
 sudo systemctl enable --now ollama
 git clone https://github.com/v-k-19/andy.git
 cd andy
@@ -23,7 +23,7 @@ Close Andy, then open your existing project folder. If you followed this chat's 
 ```bash
 cd ~/andy-app
 git pull --ff-only
-sudo pacman -S mpv yt-dlp deno xdg-utils
+sudo pacman -S mpv yt-dlp deno xdg-utils libnotify
 bash install-desktop.sh
 .venv/bin/python desktop.py
 ```
@@ -46,6 +46,48 @@ Examples:
 - “Read the latest news.” — up to three recent headlines for the India/English news edition.
 - “Tell me technology news.” — recent headlines matching that topic.
 - “Explain how a processor works.” Then, after waking Andy again: “Give me an example.” — uses recent conversation context.
+
+## Local + cloud technical help
+
+Andy supports three **AI inference** modes from the orb’s right-click menu:
+
+- **Local:** general model replies use Ollama on your configured server.
+- **Hybrid (default):** technical questions containing terms such as Python, code, CPU, Linux, debugging, or databases use OpenAI when an API key is configured. Their short follow-ups also use the cloud. Other general questions use Ollama. Without a key, hybrid remains local.
+- **Cloud:** general model replies use OpenAI; deterministic personal commands, desktop tools, and live-information handlers still run first.
+
+Routing is a keyword heuristic, not a semantic classifier. You can override it for a single question: **“Ask cloud explain Python decorators”** or **“Ask local explain Python decorators.”** Cloud replies have a separate conversation history, so local notes, tasks, and personal command history are not bundled into a later technical request. If you explicitly include private information in a cloud-routed question, that question is sent.
+
+### Configure cloud on your PC
+
+1. Start Andy, right-click the orb, and choose **Cloud AI settings…**.
+2. Choose **Hybrid** and enter your own OpenAI API key in the password field.
+3. The default cloud model is `gpt-4.1-mini`; choose another Responses API-compatible text model you have access to if desired.
+4. Save, wake Andy, and ask a technical question. The orb status identifies cloud use.
+
+The key and menu settings are kept only in the running process, not in the repository or a settings file. Alternatively, supply `OPENAI_API_KEY`, `ANDY_CLOUD_MODEL`, and `ANDY_AI_MODE` through your PC’s runtime environment. Do not paste API keys into this chat. Cloud API usage may be billed and depends on your account’s model access and internet connectivity. Cloud inference has not been tested against a live account here because no API key is configured.
+
+OpenAI receives the cloud question and recent cloud conversation (and retrieved evidence for that question when applicable), with API response storage disabled through `store: false`. This does not override the provider’s account-level retention policies. If cloud access fails before a reply, Andy announces fallback to Ollama; an interrupted partial cloud reply is reported rather than silently retried. Local mode affects **model inference only**: the existing online voice, search, weather, news, and music services still make network requests when used.
+
+Cloud implementation reference: [OpenAI streaming responses](https://developers.openai.com/api/docs/guides/streaming-responses).
+
+## Personal assistant commands
+
+These requests use local deterministic code rather than either AI model:
+
+- **“Set a timer for five minutes.”** / **“Set a ten minute timer.”**
+- **“Remind me to drink water in twenty minutes.”**
+- **“Remind me to study at nine PM today.”** Use `tomorrow` after the time to schedule the next day.
+- **“List my timers.”** / **“List my reminders.”** / **“Cancel reminder 1.”**
+- **“Remember that I prefer Python.”** / **“Read my notes.”** / **“Delete note 1.”**
+- **“Add buy milk to my to do list.”** / **“List my tasks.”** / **“Complete task 1.”**
+
+Durations accept seconds, minutes, and hours, with digits or common English number words. Absolute reminders use the PC’s timezone. An explicit time already passed *today* is rejected, not silently moved to another day; without a day qualifier, the next occurrence is selected. Confirm the PC’s clock with `timedatectl`.
+
+Notes, to-dos, and timer/reminder deadlines are saved in `$XDG_DATA_HOME/andy/personal.json` (normally `~/.local/share/andy/personal.json`). The data file is replaced atomically with owner-only permissions. It is **not encrypted**. These records persist across restarts; microphone recordings and conversation transcripts are still not saved.
+
+**Keep Andy running and the PC awake for on-time alerts.** There is no OS background scheduling service. Overdue pending reminders are delivered when Andy is next running. While active, the orb shows alerts and, with `libnotify` and your desktop notification service available, posts notifications. Voice alerts are queued until the listener is waiting for its wake word, so an answer or question is not interrupted. While paused, notifications still work but no voice alert is queued. A fully closed app cannot notify you. Pause/restart does not delete saved records.
+
+Personal commands and stored records are excluded from automatic cloud-AI requests. However, the existing default neural **speech service receives spoken reply text**, including notes you ask Andy to read. Set `ANDY_TTS_ENGINE=espeak` to keep spoken personal replies offline too. App launching and music behavior remain as described below; model-generated instructions are never executed as shell commands.
 
 ## Soft female English voice
 
@@ -138,7 +180,7 @@ Music has a separate player from the spoken voice. Pausing Andy's microphone doe
 
 - **Click / Space:** start or pause listening.
 - **Drag:** move the orb.
-- **Right-click:** listening controls, latest live sources, and Quit.
+- **Right-click:** listening controls, AI mode, Cloud AI settings, latest live sources, and Quit.
 - **Escape:** close Andy when it has keyboard focus.
 - **Hover:** show status and errors.
 
@@ -186,7 +228,7 @@ It prints the project folder, Git version, separate Weather/News/Web search resu
 
 Configuration variables are documented in `.env.example`. Set them in the environment before starting the app. Important options include `ANDY_MODEL`, `OLLAMA_URL`, `ANDY_WEATHER_CITY`, `ANDY_TTS_ENGINE`, `ANDY_TTS_VOICE`, `ANDY_TTS_RATE`, `ANDY_INPUT_DEVICE`, `ANDY_SPEECH_MODEL`, and `ANDY_SPEECH_LANGUAGE` (default `en`).
 
-Microphone audio and conversation context stay in memory, with no saved recordings or transcripts. After initial model downloads, recognition runs offline. General conversation is sent to the configured Ollama server; the default is local. Female neural speech sends reply text to Microsoft. Weather sends city/coordinates to Open-Meteo; news sends search topics to Google News. Temporary synthesized audio is removed after playback. Web search sends query text to search providers; page reading requests public pages and supplies extracted text to the configured Ollama server. Desktop tools can launch supported apps and inspect/play audio in your configured Music folder. They do not send messages or create scheduled actions.
+Microphone audio and conversation context stay in memory, with no saved recordings or transcripts. After initial model downloads, recognition runs offline. General conversation uses the selected local/hybrid/cloud routing. Ollama defaults to the local PC; configured cloud AI sends cloud-routed questions and recent cloud history to OpenAI. Saved personal records are excluded from automatic cloud AI context. Female neural speech sends reply text to Microsoft. Weather sends city/coordinates to Open-Meteo; news sends search topics to Google News. Temporary synthesized audio is removed after playback. Web search sends query text to search providers; page reading requests public pages and supplies extracted text to the configured Ollama server. Desktop tools can launch supported apps and inspect/play audio in your configured Music folder. They do not send messages. Local timers and reminders are checked by the running app, as described above.
 
 The earlier browser interface remains available with `python3 server.py` and http://127.0.0.1:8000. It uses browser speech features; the native soft voice and live-source menu described here belong to `desktop.py`; weather/news routing also works through the browser API.
 
@@ -194,7 +236,7 @@ The earlier browser interface remains available with `python3 server.py` and htt
 
 ```bash
 python3 -m unittest discover -s tests -v
-python3 -m py_compile desktop.py voice_output.py live_information.py speech_input.py web_tools.py desktop_tools.py
+python3 -m py_compile desktop.py voice_output.py live_information.py speech_input.py web_tools.py desktop_tools.py ai_router.py personal_assistant.py
 bash -n install-desktop.sh
 ```
 

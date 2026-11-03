@@ -14,6 +14,8 @@ from speech_input import SpeechInput
 from voice_output import speech_command
 from live_information import LiveInformation
 from desktop_tools import DesktopTools
+from ai_router import BrainRouter, CloudFailure
+from personal_assistant import PersonalAssistant
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, ProxyHandler, build_opener
 
@@ -38,13 +40,15 @@ def is_wake_word(text):
     return bool(re.search(r'\b(?:andy|andi|andie)\b', text, re.IGNORECASE))
 
 
-def ask_ollama(history, text, on_sentence=None, stop=None, information=None, tools=None):
+def ask_ollama(history, text, on_sentence=None, stop=None, information=None, tools=None, router=None, personal=None, notice=None):
     if stop and stop.is_set():
         return '', history
+    provider, text = router.choose(text) if router else ('local', text)
     messages = (history + [{'role': 'user', 'content': text}])[-12:]
     information=information or LiveInformation()
-    immediate=(tools.handle(text,stop=stop) if tools else None) or local_reply(text) or information.answer(text)
+    immediate=(personal.handle(text) if personal else None) or (tools.handle(text,stop=stop) if tools else None) or local_reply(text) or information.answer(text)
     if immediate:
+        if router:router.last_provider='personal'
         if on_sentence and not (stop and stop.is_set()):
             on_sentence(immediate)
         return immediate, messages + [{'role': 'assistant', 'content': immediate}]
@@ -52,8 +56,21 @@ def ask_ollama(history, text, on_sentence=None, stop=None, information=None, too
     if information.evidence:
         model_messages=messages[-4:].copy()
         model_messages[-1]={'role':'user','content':json.dumps({'question':text,'retrieved_source_data':information.evidence},ensure_ascii=False)}
+    system = PROMPT + '\nCurrent computer local time and date: ' + datetime.now().astimezone().isoformat(timespec='minutes')
+    if provider == 'cloud':
+        if notice:notice('Using cloud AI', 'This question is being sent to OpenAI.')
+        try:
+            answer=router.cloud_answer(model_messages[-1]['content'],system,on_sentence=on_sentence,stop=stop)
+            if stop and stop.is_set():return '',history
+            return answer,messages+[{'role':'assistant','content':answer}]
+        except CloudFailure as exc:
+            if exc.partial:
+                raise RuntimeError('The cloud reply was interrupted. Please ask again.') from exc
+            if notice:notice('Using local Ollama instead',str(exc))
+            if on_sentence:on_sentence('Cloud AI is unavailable or not configured. I will try the local model.')
+    if router:router.last_provider='local'
     payload = {'model': MODEL_NAME, 'stream': True, 'keep_alive': '30m',
-               'messages': [{'role': 'system', 'content': PROMPT + '\nCurrent computer local time and date: ' + datetime.now().astimezone().isoformat(timespec='minutes')}] + model_messages,
+               'messages': [{'role': 'system', 'content': system}] + model_messages,
                'options': {'num_predict': 180, 'num_ctx': 2048}}
     req = Request(os.getenv('OLLAMA_URL', 'http://127.0.0.1:11434').rstrip('/') + '/api/chat',
                   data=json.dumps(payload).encode(), headers={'Content-Type': 'application/json'})
@@ -104,7 +121,7 @@ def ask_ollama(history, text, on_sentence=None, stop=None, information=None, too
 
 
 class VoiceWorker:
-    def __init__(self, events, token, stop, tools=None):
+    def __init__(self, events, token, stop, tools=None, router=None, personal=None):
         self.events, self.token, self.stop = events, token, stop
         self.audio = queue.Queue(maxsize=80)
         self.history = []
@@ -114,6 +131,10 @@ class VoiceWorker:
         self.stream = None
         self.information = LiveInformation()
         self.tools=tools
+        self.router=router or BrainRouter()
+        self.router.reset()
+        self.personal=personal
+        self.alerts=queue.Queue()
 
     def emit(self, title, detail=''):
         self.events.put((self.token, title, detail))
@@ -195,6 +216,16 @@ class VoiceWorker:
             with self.stream:
                 self.emit('Say “Andy”', 'Wait for “Yes?” before asking your question.')
                 while not self.stop.is_set():
+                    if waiting:
+                        try:
+                            alert=self.alerts.get_nowait()
+                        except queue.Empty:
+                            pass
+                        else:
+                            self.emit('Reminder', alert)
+                            self.say(alert)
+                            self.clear_audio()
+                            wake.Reset()
                     if self.input_problem.is_set():
                         self.input_problem.clear()
                         self.emit('Audio input interrupted', 'Check your microphone or reduce other CPU-heavy work.')
@@ -244,13 +275,13 @@ class VoiceWorker:
                                 self.say(sentence)
                             try:
                                 answer, updated_history = ask_ollama(
-                                    self.history, text, on_sentence=speak_sentence, stop=self.stop, information=self.information, tools=self.tools)
+                                    self.history, text, on_sentence=speak_sentence, stop=self.stop, information=self.information, tools=self.tools, router=self.router, personal=self.personal, notice=self.emit)
                                 if self.stop.is_set():
                                     break
                                 self.history = updated_history
                             except RuntimeError as exc:
-                                self.emit('Ollama unavailable', str(exc))
-                                self.say('I could not reach the model. Please check Ollama. Time, weather, and news use separate services.')
+                                self.emit('AI reply unavailable', str(exc))
+                                self.say(str(exc))
                             self.clear_audio()
                             recorded.clear()
                             waiting = True
@@ -271,8 +302,8 @@ def main():
     import sys
     try:
         from PySide6.QtCore import Qt, QTimer, QPointF
-        from PySide6.QtGui import QColor, QPainter, QPen, QFont, QAction
-        from PySide6.QtWidgets import QApplication, QWidget, QMenu
+        from PySide6.QtGui import QColor, QPainter, QPen, QFont, QAction, QActionGroup
+        from PySide6.QtWidgets import QApplication, QWidget, QMenu, QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QLabel, QComboBox
     except ImportError:
         raise SystemExit('Desktop dependencies are missing. Run bash install-desktop.sh first.')
     from particle_orb import ParticleCloud
@@ -295,6 +326,8 @@ def main():
             self.detail = 'Drag to move · Right-click for controls'
             self.events = queue.Queue()
             self.tools=DesktopTools()
+            self.router=BrainRouter()
+            self.personal=PersonalAssistant()
             self.worker = None
             self.thread = None
             self.token = 0
@@ -303,19 +336,23 @@ def main():
             self.drag_position = None
             self.dragged = False
             self.menu_open = False
+            self.alert_visible_until=0
             self.animation = QTimer(self)
             self.animation.timeout.connect(self.update)
             self.animation.start(40)
             self.event_timer = QTimer(self)
             self.event_timer.timeout.connect(self.poll)
             self.event_timer.start(100)
+            self.reminder_timer=QTimer(self)
+            self.reminder_timer.timeout.connect(self.check_reminders)
+            self.reminder_timer.start(1000)
             self.setToolTip(self.heading + '\n' + self.detail)
 
         def start(self):
             if self.thread and self.thread.is_alive():
                 return
             self.token += 1
-            self.worker = VoiceWorker(self.events, self.token, threading.Event(),self.tools)
+            self.worker = VoiceWorker(self.events, self.token, threading.Event(),self.tools,self.router,self.personal)
             self.thread = threading.Thread(target=self.worker.run, daemon=True)
             self.mode = 'thinking'
             self.heading = 'Loading Andy…'
@@ -369,6 +406,52 @@ def main():
                 self.setToolTip(self.heading + '\n' + self.detail)
             # Animation state describes the voice phase, not measured microphone volume.
 
+        def check_reminders(self):
+            for message in self.personal.due():
+                self.heading='Reminder'
+                self.alert_visible_until=time.monotonic()+10
+                self.detail=message
+                self.setToolTip(message)
+                self.update()
+                if shutil.which('notify-send'):
+                    self.tools.launch(['notify-send','--app-name=Andy','--','Andy',message])
+                if self.worker and self.thread and self.thread.is_alive() and not self.worker.stop.is_set():
+                    self.worker.alerts.put(message)
+
+        def cloud_settings(self):
+            dialog=QDialog(self)
+            dialog.setWindowTitle('Andy — Cloud AI settings')
+            form=QFormLayout(dialog)
+            info=QLabel('Hybrid mode sends technical questions and their cloud follow-ups to OpenAI. '
+                        'Personal commands stay out of cloud AI. API usage may be billed. '
+                        'Your key is kept in memory for this app session only.')
+            info.setWordWrap(True)
+            form.addRow(info)
+            mode=QComboBox()
+            for value,label in [('local','Local Ollama only'),('hybrid','Hybrid: cloud for technical questions'),('cloud','Cloud for general AI replies')]:
+                mode.addItem(label,value)
+            mode.setCurrentIndex(mode.findData(self.router.mode))
+            form.addRow('AI mode',mode)
+            key=QLineEdit()
+            key.setEchoMode(QLineEdit.EchoMode.Password)
+            key.setPlaceholderText('Already configured — leave blank to keep' if os.getenv('OPENAI_API_KEY') else 'Paste your OpenAI API key here, on your PC')
+            form.addRow('API key',key)
+            model=QLineEdit(os.getenv('ANDY_CLOUD_MODEL','gpt-4.1-mini'))
+            form.addRow('Cloud model',model)
+            buttons=QDialogButtonBox(QDialogButtonBox.StandardButton.Save|QDialogButtonBox.StandardButton.Cancel)
+            buttons.accepted.connect(dialog.accept)
+            buttons.rejected.connect(dialog.reject)
+            form.addRow(buttons)
+            if dialog.exec()==QDialog.DialogCode.Accepted:
+                if key.text().strip():os.environ['OPENAI_API_KEY']=key.text().strip()
+                os.environ['ANDY_CLOUD_MODEL']=model.text().strip() or 'gpt-4.1-mini'
+                self.router.mode=mode.currentData()
+                self.heading='AI mode: '+self.router.mode
+                self.detail='Cloud ready for the next question.' if os.getenv('OPENAI_API_KEY') else 'Cloud key not configured; Ollama remains available.'
+                self.setToolTip(self.heading+'\n'+self.detail)
+                self.update()
+            key.clear()
+
         def paintEvent(self, event):
             painter = QPainter(self)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -384,7 +467,7 @@ def main():
                 pen.setWidthF(size * max(.7, radius / 125))
                 painter.setPen(pen)
                 painter.drawPoint(QPointF(center.x() + x * radius, center.y() + y * radius))
-            if self.hovered or self.menu_open or self.mode in ('idle', 'paused'):
+            if self.hovered or self.menu_open or self.mode in ('idle', 'paused') or time.monotonic()<self.alert_visible_until:
                 painter.setPen(QColor(188, 205, 242, 230))
                 painter.setFont(QFont('Sans', 10))
                 painter.drawText(12, height - 65, width - 24, 26,
@@ -448,6 +531,17 @@ def main():
                 for label,url in self.worker.information.sources:
                     sources.addAction(label,lambda checked=False,link=url:webbrowser.open(link))
             menu.addSeparator()
+            menu.addAction('Cloud AI settings…',self.cloud_settings)
+            modes=menu.addMenu('AI mode: '+self.router.mode)
+            group=QActionGroup(modes)
+            group.setExclusive(True)
+            for value,label in [('local','Local only'),('hybrid','Hybrid'),('cloud','Cloud AI')]:
+                action=modes.addAction(label)
+                action.setCheckable(True)
+                action.setChecked(self.router.mode==value)
+                action.triggered.connect(lambda checked=False,choice=value:setattr(self.router,'mode',choice))
+                group.addAction(action)
+            menu.addSeparator()
             menu.addAction('Quit Andy', self.close)
             menu.exec(event.globalPos())
             self.menu_open = False
@@ -477,6 +571,7 @@ def main():
         def closeEvent(self, event):
             self.animation.stop()
             self.event_timer.stop()
+            self.reminder_timer.stop()
             if self.worker:
                 self.worker.cancel()
             self.tools.close()
