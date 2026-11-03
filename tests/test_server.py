@@ -41,6 +41,21 @@ class AndyTests(unittest.TestCase):
         self.assertEqual(h.result[0],200)
         self.assertTrue(h.result[1]['reply'].startswith("It's "))
 
+    def test_capabilities_bypass_ollama(self):
+        h=self.handler({'messages':[{'role':'user','content':'What can you do?'}]})
+        with patch.object(server,'build_opener') as model:
+            h.do_POST()
+            model.assert_not_called()
+        self.assertIn('weather',h.result[1]['reply'])
+
+    def test_weather_uses_live_handler(self):
+        h=self.handler({'messages':[{'role':'user','content':'Weather in Hyderabad'}]})
+        with patch.object(server,'LiveInformation') as live,patch.object(server,'build_opener') as model:
+            live.return_value.answer.return_value='Live weather result'
+            h.do_POST()
+            model.assert_not_called()
+        self.assertEqual(h.result,(200,{'reply':'Live weather result'}))
+
     def test_unavailable_ollama(self):
         h=self.handler({'messages':[{'role':'user','content':'Hi'}]})
         with patch.object(server,'build_opener') as opener:

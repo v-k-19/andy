@@ -8,6 +8,7 @@ import os
 import re
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 import xml.etree.ElementTree as ET
 
 
@@ -17,6 +18,12 @@ WEATHER = {0:'clear skies',1:'mainly clear skies',2:'partly cloudy skies',3:'ove
            66:'freezing rain',67:'freezing rain',71:'light snow',73:'snow',75:'heavy snow',
            77:'snow grains',80:'light rain showers',81:'rain showers',82:'heavy rain showers',
            85:'snow showers',86:'heavy snow showers',95:'thunderstorms',96:'thunderstorms with hail',99:'thunderstorms with hail'}
+
+
+CAPABILITIES = ('I can answer questions, explain things, follow our recent conversation, tell '
+                'the time and date, fetch Hyderabad weather and forecasts, and read recent '
+                'news headlines. Weather, news, and the natural female voice need an internet '
+                'connection. I cannot control your apps or browse arbitrary websites.')
 
 
 def fetch(url, *, json_data=True):
@@ -43,18 +50,46 @@ class LiveInformation:
     def __init__(self):
         self.city=os.getenv('ANDY_WEATHER_CITY','Hyderabad, India')
         self.sources=[]
+        self.last_error=None
 
     def answer(self,text):
-        lower=text.lower().strip()
-        if re.search(r'\b(weather|temperature|forecast|rain)\b',lower) and not re.search(r'\b(explain|define|causes|meaning)\b|^what (?:is|causes) (?:weather|rain)\??$',lower):
+        lower=text.lower().strip().replace('’', "'")
+        self.last_error=None
+        question=re.sub(r'[^a-z0-9\s]', '', lower)
+        question=re.sub(r'^(?:hey )?andy\s+', '', question)
+        question=' '.join(question.split())
+        if question in {'what can you do','what can you do for me','what do you do',
+                        'how can you help','how can you help me','what are your capabilities',
+                        'what are your features','tell me what you can do','tell me about yourself'}:
+            return CAPABILITIES
+        # Restrict the common speech homophone to weather-request phrases.
+        lower=re.sub(r"\b(?:what'?s|what is|how'?s|how is|current|today'?s|tomorrow'?s)\s+(?:the\s+)?whether\b", 'weather', lower)
+        weather_words=re.search(r'\b(weather|temperature|forecast|rain|raining)\b',lower)
+        conditions=re.search(r"\b(?:how (?:hot|cold) is it|(?:hot|cold) outside|need (?:an? )?umbrella)\b",lower)
+        conceptual=re.search(r'\b(explain|define|causes|meaning)\b|^what (?:is|causes) (?:weather|rain)\??$|^why does it rain',lower)
+        if (weather_words or conditions) and not conceptual:
             self.sources=[]
-            try:return self.weather(text)
-            except Exception:return 'I could not retrieve live weather just now. Please check your internet connection and try again.'
-        if re.search(r'\b(news|headlines)\b',lower) and not re.search(r'\b(explain|define|meaning)\b',lower):
+            query=text
+            if 'weather' in lower and not re.search(r'\bweather\b',text,re.I):
+                query=re.sub(r'\bwhether\b','weather',query,flags=re.I)
+            return self.retrieve('weather',query)
+        news_words=re.search(r"\b(news|headlines|latest updates|current events)\b|what'?s happening (?:in|around) (?:the )?world",lower)
+        if news_words and not re.search(r'\b(explain|define|meaning)\b',lower):
             self.sources=[]
-            try:return self.news(text)
-            except Exception:return 'I could not retrieve recent news just now. Please check your internet connection and try again.'
+            return self.retrieve('news',lower)
+        capabilities=re.search(r'\b(internet|online|external information|external tools|tools|web)\b',lower)
+        asking=re.search(r'\b(can you|do you|are you able|have access|access to|what tools|your capabilities)\b',lower)
+        if capabilities and asking:
+            return CAPABILITIES
         return None
+
+    def retrieve(self,kind,text):
+        try:
+            return self.weather(text) if kind=='weather' else self.news(text)
+        except Exception as error:
+            self.last_error='HTTP '+str(error.code) if isinstance(error,HTTPError) else type(error).__name__
+            topic='live weather' if kind=='weather' else 'recent news'
+            return f'I tried the online service but could not retrieve {topic} just now. The service or connection may be unavailable. Please try again later.'
 
     def weather(self,text):
         match=re.search(r'\b(?:in|for|at)\s+(.+)',text,re.I)
@@ -82,7 +117,7 @@ class LiveInformation:
             'timezone':'auto','forecast_days':2})
         data=fetch(url)
         self.city=city
-        if re.search(r'\b(tomorrow|tonight|forecast)\b',text,re.I) or re.search(r'\brain\b',text,re.I):
+        if re.search(r'\b(tomorrow|tonight|forecast)\b',text,re.I) or re.search(r'\b(rain|raining|umbrella)\b',text,re.I):
             if re.search(r'\btonight\b',text,re.I):
                 return 'I have current conditions and a daily forecast, but not an hourly forecast for tonight. Try asking for tomorrow’s weather.'
             daily=data['daily']
@@ -107,7 +142,7 @@ class LiveInformation:
         return answer
 
     def news(self,text):
-        query=re.sub(r'\b(?:andy|hey|please|tell|me|give|read|what|are|is|the|latest|recent|today|todays|some|news|headlines|about|on|in|for)\b', ' ',text.lower())
+        query=re.sub(r'\b(?:andy|hey|please|tell|me|give|read|what|are|is|the|latest|recent|today|todays|some|news|headlines|updates|current|events|happening|going|around|about|on|in|for)\b', ' ',text.lower())
         query=' '.join(re.sub(r'[^a-z0-9 -]',' ',query).split())[:100]
         params={'hl':'en-IN','gl':'IN','ceid':'IN:en'}
         endpoint='https://news.google.com/rss'

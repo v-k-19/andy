@@ -16,6 +16,36 @@ def weather_data():
 
 
 class LiveTests(unittest.TestCase):
+    def test_capabilities_bypass_model_and_network(self):
+        with patch('live_information.fetch') as internet,patch.object(desktop,'build_opener') as model:
+            answer,_=desktop.ask_ollama([], 'What can you do?')
+            internet.assert_not_called()
+            model.assert_not_called()
+        self.assertIn('weather',answer)
+        self.assertIn('news headlines',answer)
+        self.assertIn('need an internet connection',answer)
+
+    def test_internet_capability_is_not_a_connectivity_claim(self):
+        with patch('live_information.fetch') as internet:
+            answer=LiveInformation().answer('Can you access external information and tools?')
+            internet.assert_not_called()
+        self.assertIn('weather',answer)
+        self.assertIn('cannot control',answer)
+
+    def test_natural_weather_phrasing_and_speech_homophone_route(self):
+        for question in ['How hot is it outside?', "What's the whether in Hyderabad?", 'Do I need an umbrella?']:
+            info=LiveInformation()
+            with patch.object(info,'weather',return_value='Weather result') as lookup:
+                self.assertEqual(info.answer(question),'Weather result')
+                lookup.assert_called_once()
+
+    def test_failure_records_type_without_model_guess(self):
+        info=LiveInformation()
+        with patch('live_information.fetch',side_effect=TimeoutError()):
+            answer=info.answer('Read the news')
+        self.assertEqual(info.last_error,'TimeoutError')
+        self.assertIn('tried the online service',answer)
+
     def test_hyderabad_default_and_metric_reading_are_from_api(self):
         info=LiveInformation()
         geo={'results':[{'name':'Hyderabad','country':'India','latitude':17.38,'longitude':78.48}]}

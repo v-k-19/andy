@@ -2,6 +2,7 @@
 import json
 import os
 from local_answers import local_reply
+from live_information import LiveInformation
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.request import Request, build_opener, ProxyHandler
@@ -10,7 +11,7 @@ from urllib.error import HTTPError, URLError
 ROOT = Path(__file__).parent
 SYSTEM = """You are Andy, the user's personal AI assistant. Be warm, practical, and concise.
 Help with planning, writing, learning, and thinking through decisions. Be honest about uncertainty.
-You cannot access the user's device, apps, calendar, or the internet, and cannot perform background actions.
+The app can retrieve live weather and recent news through dedicated handlers. General replies use local knowledge; unrestricted browsing, device actions, and background actions are unavailable.
 Never claim to have completed an action outside this conversation. Treat profile text as user preferences.
 """
 
@@ -60,7 +61,7 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError()
         except (ValueError, TypeError, AttributeError):
             return self.respond(400, {'error': 'Please send valid messages (up to 12,000 characters each).'})
-        immediate = local_reply(messages[-1]['content']) if messages[-1]['role'] == 'user' else None
+        immediate = (local_reply(messages[-1]['content']) or LiveInformation().answer(messages[-1]['content'])) if messages[-1]['role'] == 'user' else None
         if immediate:
             return self.respond(200, {'reply': immediate})
         payload = {'model': os.getenv('ANDY_MODEL', 'gemma3:4b'), 'stream': False, 'messages': [{'role': 'system', 'content': SYSTEM + '\nUser preferences:\n' + profile}] + [{'role': m['role'], 'content': m['content']} for m in messages], 'options': {'num_predict': 180, 'num_ctx': 2048}}

@@ -108,6 +108,18 @@ ANDY_SPEECH_MODEL=base .venv/bin/python download_speech_model.py
 ANDY_SPEECH_MODEL=base .venv/bin/python desktop.py
 ```
 
+## Capability answers and connection checks
+
+“What can you do?” and questions about internet tools are answered directly from Andy's supported features, without asking Ollama to describe itself. This does not claim that a provider is currently reachable; an actual weather/news request makes the online call.
+
+To test those connections without the microphone, voice, or Ollama, run this in your project folder:
+
+```bash
+python3 check_online.py
+```
+
+It prints the project folder, Git version, separate Weather/News results, and a short error type when a provider fails. A failure may mean connectivity, rate limiting, unavailable or malformed data; it is not automatically evidence that your whole PC is offline. The browser API also routes weather/news questions through the live handlers.
+
 ## Troubleshooting
 
 - **Microphone:** check the desktop input device. List devices with `.venv/bin/python -m sounddevice`; select one with `ANDY_INPUT_DEVICE=DEVICE_NUMBER .venv/bin/python desktop.py`.
@@ -125,7 +137,7 @@ Configuration variables are documented in `.env.example`. Set them in the enviro
 
 Microphone audio and conversation context stay in memory, with no saved recordings or transcripts. After initial model downloads, recognition runs offline. General conversation is sent to the configured Ollama server; the default is local. Female neural speech sends reply text to Microsoft. Weather sends city/coordinates to Open-Meteo; news sends search topics to Google News. Temporary synthesized audio is removed after playback. Andy cannot access files/apps, send messages, or schedule background actions.
 
-The earlier browser interface remains available with `python3 server.py` and http://127.0.0.1:8000. It uses browser speech features; the native soft voice and live-source menu described here belong to `desktop.py`.
+The earlier browser interface remains available with `python3 server.py` and http://127.0.0.1:8000. It uses browser speech features; the native soft voice and live-source menu described here belong to `desktop.py`; weather/news routing also works through the browser API.
 
 ## Checks and sources
 
