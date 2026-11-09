@@ -47,6 +47,21 @@ Examples:
 - “Tell me technology news.” — recent headlines matching that topic.
 - “Explain how a processor works.” Then, after waking Andy again: “Give me an example.” — uses recent conversation context.
 
+## If Andy does not hear commands
+
+1. Right-click the orb → **Choose microphone…**, select Pixy, and save. Device choices now persist in `~/.local/share/andy/devices.json` (or `$XDG_DATA_HOME/andy/devices.json`). Explicit environment overrides take priority. Camera permission is never saved.
+2. Press **Ctrl+Space**, or right-click → **Talk now — skip wake word**. Wait until the status says **Listening to your question…**, then ask a question. This captures one question without needing “Andy” first. You can launch this mode directly with `.venv/bin/python desktop.py --talk`.
+3. Watch the microphone signal percentage and level bars below the orb. No movement while speaking suggests a muted or wrong input; it does not prove a wake-word problem. Visible signal can also be background noise. Startup/loading status is now visible without hovering.
+4. If it still does not hear you, run this diagnostic on your PC:
+
+```bash
+.venv/bin/python check_microphone.py
+```
+
+The diagnostic lists inputs, shows which one it is testing, and measures five seconds of signal. It does not save recordings, transcribe your speech, upload audio, or access the camera. Use `--list` to enumerate devices without opening a microphone, or `--device NUMBER` to test an input explicitly. Paste the output when reporting problems. The diagnostic by itself does not validate speech recognition or model answers.
+
+Manual Talk now requests made during model loading or a reply are queued; speak only once the app shows **Listening to your question…**. Camera requests still require the normal per-use dialog even when wake-word detection is bypassed.
+
 ## Pixy webcam and microphone
 
 Andy can answer questions about **one camera snapshot at a time**. It does not watch continuously or record video. No camera photo is saved to disk.
@@ -61,7 +76,7 @@ Andy can answer questions about **one camera snapshot at a time**. It does not w
 
 Photos are sent only to a loopback Ollama endpoint on your PC, using the configured vision model (`gemma3:4b` by default). This path stays local even in **Cloud** or **Hybrid** AI mode. Remote `OLLAMA_URL` values are refused for camera questions. Images are not stored in conversation history or sent to OpenAI. **Spoken descriptions still follow your speech settings**: the default online neural voice receives the reply text. Use `ANDY_TTS_ENGINE=espeak` to keep spoken descriptions offline too.
 
-To prevent all camera prompts, uncheck **Camera → Allow permission requests (ask every time)**. This switch enables requests only; checking it does not open the camera or pre-authorize a photo. Camera and microphone selections are session-only. To choose a camera on startup, set `ANDY_CAMERA_DEVICE=/dev/video0` (use the path shown for Pixy in the picker). Microphone selection also supports `ANDY_INPUT_DEVICE`, as before.
+To prevent all camera prompts, uncheck **Camera → Allow permission requests (ask every time)**. This switch enables requests only; checking it does not open the camera or pre-authorize a photo. Camera and microphone selections are saved locally for later launches; camera approval is never saved. To override the saved camera on startup, set `ANDY_CAMERA_DEVICE=/dev/video0` (use the path shown for Pixy in the picker). Microphone selection also supports `ANDY_INPUT_DEVICE`, which overrides the saved choice. A saved input name may need reselection if the device is renamed or multiple inputs share that name.
 
 If the selector is missing, quit every old Andy window and launch the updated app directly into device settings:
 

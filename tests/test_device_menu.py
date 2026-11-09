@@ -38,7 +38,8 @@ class DeviceMenuTests(unittest.TestCase):
             def inspect_menu():
                 try:
                     menu = next(w for w in QApplication.topLevelWidgets() if isinstance(w,QMenu) and w.isVisible())
-                    assert [action.text() for action in menu.actions()[:3]] == ['Choose microphone…', 'Choose camera…', 'Camera and microphone…']
+                    assert menu.actions()[0].text() == 'Talk now — skip wake word'
+                    assert [action.text() for action in menu.actions()[2:5]] == ['Choose microphone…', 'Choose camera…', 'Camera and microphone…']
                     assert root_window().device_action.shortcut().toString() == 'Ctrl+,'
                     if flag != '--camera': assert os.environ.get('ANDY_INPUT_DEVICE') == '0'
                     if flag != '--microphone': assert root_window().camera.device == '/dev/video2'

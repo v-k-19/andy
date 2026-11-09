@@ -17,6 +17,8 @@ from desktop_tools import DesktopTools
 from ai_router import BrainRouter, CloudFailure
 from personal_assistant import PersonalAssistant
 from camera_input import CameraAccess, is_visual_request, camera_devices
+from microphone_input import audio_levels, input_device
+from device_preferences import DevicePreferences
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, ProxyHandler, build_opener
 
@@ -147,6 +149,7 @@ class VoiceWorker:
         self.personal=personal
         self.camera=camera
         self.alerts=queue.Queue()
+        self.talk_requested=threading.Event()
 
     def emit(self, title, detail=''):
         self.events.put((self.token, title, detail))
@@ -213,10 +216,9 @@ class VoiceWorker:
             model = Model(str(VOICE_MODEL))
             self.emit('Loading multilingual speech…', 'Preparing local English speech recognition.')
             speech = SpeechInput()
-            device = os.getenv('ANDY_INPUT_DEVICE')
-            if device and device.isdecimal():
-                device = int(device)
-            rate = int(sd.query_devices(device, 'input')['default_samplerate'])
+            device = input_device()
+            device_info = sd.query_devices(device, 'input')
+            rate = int(device_info['default_samplerate'])
             # A small grammar recognizes the name locally before enabling free-form dictation.
             wake = KaldiRecognizer(model, rate, json.dumps(['andy', 'hey andy', '[unk]']))
             command = KaldiRecognizer(model, rate)
@@ -228,8 +230,17 @@ class VoiceWorker:
             self.stream = sd.RawInputStream(samplerate=rate, blocksize=int(rate / 5), device=device,
                                             dtype='int16', channels=1, callback=self.on_audio)
             with self.stream:
-                self.emit('Say “Andy”', 'Wait for “Yes?” before asking your question.')
+                last_meter = 0.
+                self.emit('Say “Andy”', 'Or press Ctrl+Space to talk without the wake word.')
                 while not self.stop.is_set():
+                    if waiting and self.talk_requested.is_set():
+                        self.talk_requested.clear()
+                        self.clear_audio()
+                        recorded.clear()
+                        command.Reset()
+                        waiting = False
+                        deadline = time.monotonic() + 30
+                        self.emit('Listening to your question…', 'Wake word bypassed. Speak now, then pause.')
                     if waiting:
                         try:
                             alert=self.alerts.get_nowait()
@@ -253,6 +264,10 @@ class VoiceWorker:
                         data = self.audio.get(timeout=.2)
                     except queue.Empty:
                         continue
+                    if time.monotonic() - last_meter >= .4:
+                        peak, rms = audio_levels(data)
+                        self.emit('__microphone_level__', f'{peak:.6f}')
+                        last_meter = time.monotonic()
                     if waiting:
                         final = wake.AcceptWaveform(data)
                         result = json.loads(wake.Result() if final else wake.PartialResult())
@@ -342,11 +357,19 @@ def main():
             self.tools=DesktopTools()
             self.router=BrainRouter()
             self.personal=PersonalAssistant()
+            self.device_preferences=DevicePreferences()
+            self.device_preferences.apply()
             self.camera=CameraAccess()
             self.camera_dialog=None
             self.device_action = QAction('Camera and microphone…', self)
             self.device_action.setShortcut('Ctrl+,')
             self.device_action.triggered.connect(lambda checked=False: self.device_settings())
+            self.talk_action = QAction('Talk now — skip wake word', self)
+            self.talk_action.setShortcut('Ctrl+Space')
+            self.talk_action.triggered.connect(self.talk_now)
+            self.addAction(self.talk_action)
+            self.mic_level = 0.
+            self.mic_level_at = 0.
             self.microphone_action = QAction('Choose microphone…', self)
             self.microphone_action.triggered.connect(lambda checked=False: self.device_settings('microphone'))
             self.camera_action = QAction('Choose camera…', self)
@@ -374,7 +397,9 @@ def main():
             self.reminder_timer.timeout.connect(self.check_reminders)
             self.reminder_timer.start(1000)
             self.setToolTip(self.heading + '\n' + self.detail)
-            if '--microphone' in sys.argv:
+            if '--talk' in sys.argv:
+                QTimer.singleShot(0, self.talk_now)
+            elif '--microphone' in sys.argv:
                 QTimer.singleShot(0, lambda: self.device_settings('microphone'))
             elif '--camera' in sys.argv:
                 QTimer.singleShot(0, lambda: self.device_settings('camera'))
@@ -391,6 +416,17 @@ def main():
             self.heading = 'Loading Andy…'
             self.detail = 'Local voice recognition is starting.'
             self.thread.start()
+            self.update()
+
+        def talk_now(self):
+            if not self.thread or not self.thread.is_alive():
+                self.start()
+            if self.worker and not self.worker.stop.is_set():
+                self.worker.talk_requested.set()
+                self.detail = 'Talk now is queued. Speak when the status says Listening to your question.'
+            else:
+                self.detail = 'The previous session is stopping. Try Talk now again when it finishes.'
+            self.setToolTip(self.heading + '\n' + self.detail)
             self.update()
 
         def pause(self):
@@ -422,6 +458,10 @@ def main():
                     break
                 if token != self.token:
                     continue
+                if heading == '__microphone_level__':
+                    self.mic_level = float(detail)
+                    self.mic_level_at = time.monotonic()
+                    continue
                 if heading == '__finished__':
                     self.mode = 'idle'
                     continue
@@ -434,7 +474,7 @@ def main():
                     self.mode = 'speaking'
                 elif heading.startswith(('Thinking', 'Loading', 'Understanding')):
                     self.mode = 'thinking'
-                else:
+                elif heading in ('Andy stopped', 'Setup needed'):
                     self.mode = 'idle'
                 self.setToolTip(self.heading + '\n' + self.detail)
             # Animation state describes the voice phase, not measured microphone volume.
@@ -545,6 +585,7 @@ def main():
                         for index, device in enumerate(sd.query_devices()):
                             if device['max_input_channels'] > 0:
                                 microphones.addItem(device['name'] + ' (input ' + str(index) + ')', str(index))
+                                microphones.setItemData(microphones.count() - 1, device['name'], Qt.ItemDataRole.UserRole + 1)
                                 count += 1
                         microphone_status.setText(f'{count} audio input(s) found. You can also type an input name or number. '
                                                   'If Pixy is only exposed through the system default, select it in system input settings.')
@@ -588,6 +629,18 @@ def main():
                         os.environ['ANDY_INPUT_DEVICE'] = chosen
                     else:
                         os.environ.pop('ANDY_INPUT_DEVICE', None)
+                saved_microphone = None
+                if microphones is not None:
+                    saved_microphone = microphones.currentData(Qt.ItemDataRole.UserRole + 1) or chosen
+                try:
+                    self.device_preferences.save(microphone=saved_microphone,
+                                                 camera=self.camera.device if cameras is not None else None)
+                except OSError:
+                    self.heading = 'Devices selected for this session only'
+                    self.detail = 'Could not save device preferences. Check the permissions on your local Andy data folder.'
+                    self.update()
+                    dialog.deleteLater()
+                    return
                 self.heading = titles[section] + ' saved'
                 self.detail = 'Restart listening if the microphone changed. Camera permission is still required for every photo.'
                 self.setToolTip(self.heading + '\n' + self.detail)
@@ -643,7 +696,20 @@ def main():
                 pen.setWidthF(size * max(.7, radius / 125))
                 painter.setPen(pen)
                 painter.drawPoint(QPointF(center.x() + x * radius, center.y() + y * radius))
-            if self.hovered or self.menu_open or self.mode in ('idle', 'paused') or time.monotonic()<self.alert_visible_until:
+            active_input = self.thread and self.thread.is_alive() and self.mode in ('waiting', 'listening')
+            if active_input:
+                fresh = time.monotonic() - self.mic_level_at < 1.5
+                level = min(1., self.mic_level * 4) if fresh else 0.
+                painter.setPen(QColor(150, 175, 220, 220))
+                painter.setFont(QFont('Sans', 8))
+                painter.drawText(12, height - 105, width - 24, 18, Qt.AlignmentFlag.AlignHCenter,
+                                 f'Microphone signal: {self.mic_level * 100:.0f}%' if fresh else 'Waiting for microphone audio…')
+                for index in range(12):
+                    lit = index < level * 12
+                    painter.setPen(QPen(QColor(135, 190, 255, 220) if lit else QColor(100, 120, 155, 70), 3))
+                    x = width / 2 - 33 + index * 6
+                    painter.drawLine(QPointF(x, height - 82), QPointF(x, height - 77))
+            if self.hovered or self.menu_open or self.mode in ('idle', 'paused', 'waiting', 'listening') or self.heading.startswith('Loading') or time.monotonic()<self.alert_visible_until:
                 painter.setPen(QColor(188, 205, 242, 230))
                 painter.setFont(QFont('Sans', 10))
                 painter.drawText(12, height - 65, width - 24, 26,
@@ -692,6 +758,8 @@ def main():
         def contextMenuEvent(self, event):
             self.menu_open = True
             menu = QMenu(self)
+            menu.addAction(self.talk_action)
+            menu.addSeparator()
             menu.addAction(self.microphone_action)
             menu.addAction(self.camera_action)
             menu.addAction(self.device_action)
