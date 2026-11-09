@@ -329,7 +329,7 @@ def main():
             self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
             self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
             self.setAccessibleName('Andy voice assistant')
-            self.setAccessibleDescription('Transparent particle orb. Click or press Space to start or pause. Right-click for controls. Escape closes Andy.')
+            self.setAccessibleDescription('Transparent particle orb. Click or press Space to start or pause. Right-click for controls. Control comma opens camera and microphone settings. Escape closes Andy.')
             self.resize(420, 460)
             self.setMinimumSize(260, 300)
             self.setMouseTracking(True)
@@ -337,13 +337,17 @@ def main():
             self.started_at = time.monotonic()
             self.mode = 'idle'
             self.heading = 'Click to start Andy'
-            self.detail = 'Drag to move · Right-click for controls'
+            self.detail = 'Drag to move · Ctrl+, for camera and microphone'
             self.events = queue.Queue()
             self.tools=DesktopTools()
             self.router=BrainRouter()
             self.personal=PersonalAssistant()
             self.camera=CameraAccess()
             self.camera_dialog=None
+            self.device_action = QAction('Camera and microphone…', self)
+            self.device_action.setShortcut('Ctrl+,')
+            self.device_action.triggered.connect(self.device_settings)
+            self.addAction(self.device_action)
             self.worker = None
             self.thread = None
             self.token = 0
@@ -366,6 +370,8 @@ def main():
             self.reminder_timer.timeout.connect(self.check_reminders)
             self.reminder_timer.start(1000)
             self.setToolTip(self.heading + '\n' + self.detail)
+            if '--devices' in sys.argv:
+                QTimer.singleShot(0, self.device_settings)
 
         def start(self):
             if self.thread and self.thread.is_alive():
@@ -625,6 +631,8 @@ def main():
         def contextMenuEvent(self, event):
             self.menu_open = True
             menu = QMenu(self)
+            menu.addAction(self.device_action)
+            menu.addSeparator()
             running = bool(self.thread and self.thread.is_alive())
             start_action = QAction('Start listening', self)
             start_action.setEnabled(not running)
@@ -645,7 +653,6 @@ def main():
             camera_requests.setCheckable(True)
             camera_requests.setChecked(self.camera.enabled)
             camera_requests.toggled.connect(self.camera.set_enabled)
-            camera_menu.addAction('Camera and microphone settings…', self.device_settings)
             menu.addAction('Cloud AI settings…',self.cloud_settings)
             modes=menu.addMenu('AI mode: '+self.router.mode)
             group=QActionGroup(modes)
