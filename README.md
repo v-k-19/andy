@@ -52,7 +52,7 @@ Examples:
 Andy can answer questions about **one camera snapshot at a time**. It does not watch continuously or record video. No camera photo is saved to disk.
 
 1. Update Andy and run `bash install-desktop.sh` to install the new OpenCV camera dependency.
-2. Right-click the orb → **Camera and microphone…** (the first menu item), or press **Ctrl+,** while Andy has focus.
+2. Right-click the orb → **Choose microphone…** or **Choose camera…**, or press **Ctrl+,** while Andy has focus.
 3. Select your **Pixy** camera and its microphone, then save. Listing devices reads names only; it does not open the lens or microphone. If the microphone changes, click the orb to restart listening.
 4. Wake Andy and say **“What do you see?”**, **“What am I holding?”**, or **“Look at this and describe it.”**
 5. A native dialog asks **“Allow Andy to use your camera once?”** Choose **Allow once** or **Deny**. **Deny is the default**, including Escape or closing the dialog. Requests expire after one minute.
@@ -73,6 +73,15 @@ bash install-desktop.sh
 ```
 
 Updating files does not update an already-running Python process. `--devices` opens the native device picker immediately, without starting the microphone or camera. Settings can also be opened from the main right-click menu or **Ctrl+,**.
+
+You can open either selector directly, without navigating the orb menu:
+
+```bash
+.venv/bin/python desktop.py --microphone
+.venv/bin/python desktop.py --camera
+```
+
+Each picker has **Refresh devices** and shows how many devices Linux exposes. The microphone picker also accepts an input name or number. **Open system input settings** opens an installed sound settings app. If Linux exposes Pixy's microphone only through the default input, choose Pixy in that sound settings app, then leave Andy on **System default microphone**. Install `pavucontrol` with `sudo pacman -S pavucontrol` if you do not have a sound settings app. Camera selection still does not activate it or grant capture permission.
 
 A webcam may expose multiple `/dev/video*` nodes. Select a node that provides video frames if the first entry cannot capture. Close other apps using that camera. Camera analysis can be slower than text questions on a CPU, and small text or fine details may be misread. Ask a fresh camera question for a new image; visual follow-ups do not reuse a stored photo. The actual Pixy hardware has not been tested in this cloud workspace.
 

@@ -317,7 +317,7 @@ def main():
     try:
         from PySide6.QtCore import Qt, QTimer, QPointF
         from PySide6.QtGui import QColor, QPainter, QPen, QFont, QAction, QActionGroup
-        from PySide6.QtWidgets import QApplication, QWidget, QMenu, QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QLabel, QComboBox, QMessageBox
+        from PySide6.QtWidgets import QApplication, QWidget, QMenu, QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QLabel, QComboBox, QMessageBox, QPushButton
     except ImportError:
         raise SystemExit('Desktop dependencies are missing. Run bash install-desktop.sh first.')
     from particle_orb import ParticleCloud
@@ -346,7 +346,11 @@ def main():
             self.camera_dialog=None
             self.device_action = QAction('Camera and microphone…', self)
             self.device_action.setShortcut('Ctrl+,')
-            self.device_action.triggered.connect(self.device_settings)
+            self.device_action.triggered.connect(lambda checked=False: self.device_settings())
+            self.microphone_action = QAction('Choose microphone…', self)
+            self.microphone_action.triggered.connect(lambda checked=False: self.device_settings('microphone'))
+            self.camera_action = QAction('Choose camera…', self)
+            self.camera_action.triggered.connect(lambda checked=False: self.device_settings('camera'))
             self.addAction(self.device_action)
             self.worker = None
             self.thread = None
@@ -370,7 +374,11 @@ def main():
             self.reminder_timer.timeout.connect(self.check_reminders)
             self.reminder_timer.start(1000)
             self.setToolTip(self.heading + '\n' + self.detail)
-            if '--devices' in sys.argv:
+            if '--microphone' in sys.argv:
+                QTimer.singleShot(0, lambda: self.device_settings('microphone'))
+            elif '--camera' in sys.argv:
+                QTimer.singleShot(0, lambda: self.device_settings('camera'))
+            elif '--devices' in sys.argv:
                 QTimer.singleShot(0, self.device_settings)
 
         def start(self):
@@ -482,52 +490,105 @@ def main():
             self.camera_dialog = None
             dialog.deleteLater()
 
-        def device_settings(self):
+        def device_settings(self, section='both'):
             dialog = QDialog(self)
-            dialog.setWindowTitle('Andy — Camera and microphone')
+            titles = {'both': 'Camera and microphone', 'camera': 'Choose camera', 'microphone': 'Choose microphone'}
+            dialog.setWindowTitle('Andy — ' + titles[section])
+            dialog.setMinimumWidth(480)
             form = QFormLayout(dialog)
-            info = QLabel('Select Pixy here. Listing devices does not open the camera. '
-                          'Andy asks before every photo. Microphone changes apply when listening restarts.')
+            info = QLabel('Select your Pixy device below and click Save. Listing devices does not open '
+                          'the camera or microphone. Camera use still requires permission for every photo.')
             info.setWordWrap(True)
             form.addRow(info)
-            cameras = QComboBox()
-            listed = camera_devices()
-            if not any(path == self.camera.device for path, name in listed):
-                listed.insert(0, (self.camera.device, 'Current / default camera'))
-            for path, name in listed:
-                cameras.addItem(name + ' — ' + path, path)
-            cameras.setCurrentIndex(cameras.findData(self.camera.device))
-            form.addRow('Camera', cameras)
-            microphones = QComboBox()
-            microphones.addItem('System default microphone', '')
-            selected = os.getenv('ANDY_INPUT_DEVICE', '')
-            try:
-                import sounddevice as sd
-                for index, device in enumerate(sd.query_devices()):
-                    if device['max_input_channels'] > 0:
-                        microphones.addItem(device['name'] + ' (' + str(index) + ')', str(index))
-            except Exception:
-                form.addRow(QLabel('Could not list microphones. Check audio dependencies and device permissions.'))
-            if selected and microphones.findData(selected) < 0:
-                microphones.addItem('Configured input: ' + selected, selected)
-            microphones.setCurrentIndex(max(0, microphones.findData(selected)))
-            form.addRow('Microphone', microphones)
+            cameras = QComboBox() if section in ('both', 'camera') else None
+            microphones = QComboBox() if section in ('both', 'microphone') else None
+            camera_status = QLabel()
+            camera_status.setWordWrap(True)
+            microphone_status = QLabel()
+            microphone_status.setWordWrap(True)
+            if cameras is not None:
+                cameras.setObjectName('camera_device')
+                form.addRow('Camera device', cameras)
+                form.addRow(camera_status)
+            if microphones is not None:
+                microphones.setObjectName('microphone_device')
+                microphones.setEditable(True)
+                microphones.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+                form.addRow('Microphone device', microphones)
+                form.addRow(microphone_status)
+
+            def microphone_value():
+                if microphones is None:
+                    return os.getenv('ANDY_INPUT_DEVICE', '')
+                value = microphones.currentData()
+                return str(value) if value is not None else microphones.currentText().strip()
+
+            def refresh():
+                if cameras is not None:
+                    selected = cameras.currentData() or self.camera.device
+                    cameras.clear()
+                    listed = camera_devices()
+                    for path, name in listed:
+                        cameras.addItem(name + ' — ' + path, path)
+                    if not any(path == selected for path, name in listed):
+                        cameras.addItem('Configured camera (not detected): ' + selected, selected)
+                    cameras.setCurrentIndex(max(0, cameras.findData(selected)))
+                    camera_status.setText(f'{len(listed)} video device(s) found.' if listed else
+                                          'Linux reports no webcam devices. Reconnect Pixy and click Refresh devices.')
+                if microphones is not None:
+                    selected = microphone_value()
+                    microphones.clear()
+                    microphones.addItem('System default microphone', '')
+                    try:
+                        import sounddevice as sd
+                        count = 0
+                        for index, device in enumerate(sd.query_devices()):
+                            if device['max_input_channels'] > 0:
+                                microphones.addItem(device['name'] + ' (input ' + str(index) + ')', str(index))
+                                count += 1
+                        microphone_status.setText(f'{count} audio input(s) found. You can also type an input name or number. '
+                                                  'If Pixy is only exposed through the system default, select it in system input settings.')
+                    except Exception:
+                        microphone_status.setText('Could not enumerate inputs. Use system input settings, or type a known microphone name or number.')
+                    if selected and microphones.findData(selected) < 0:
+                        microphones.addItem('Configured input: ' + selected, selected)
+                    microphones.setCurrentIndex(max(0, microphones.findData(selected)))
+
+            # Preserve a previously configured microphone on the first enumeration.
+            if microphones is not None:
+                initial = os.getenv('ANDY_INPUT_DEVICE', '')
+                microphones.addItem('Current input' if initial else 'System default microphone', initial)
+            refresh()
+            refresh_button = QPushButton('Refresh devices')
+            refresh_button.clicked.connect(refresh)
+            form.addRow(refresh_button)
+            if microphones is not None:
+                system_button = QPushButton('Open system input settings')
+                def system_settings():
+                    for program in ('pavucontrol', 'pwvucontrol', 'systemsettings', 'gnome-control-center'):
+                        executable = shutil.which(program)
+                        if executable and self.tools.launch([executable]):
+                            return
+                    microphone_status.setText('No sound settings app was found. Install one with: sudo pacman -S pavucontrol')
+                system_button.clicked.connect(system_settings)
+                form.addRow(system_button)
             buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
             buttons.accepted.connect(dialog.accept)
             buttons.rejected.connect(dialog.reject)
             form.addRow(buttons)
             if dialog.exec() == QDialog.DialogCode.Accepted:
-                self.camera.cancel_all()
-                self.camera.device = cameras.currentData()
-                chosen = microphones.currentData()
-                if chosen != os.getenv('ANDY_INPUT_DEVICE', ''):
+                if cameras is not None:
+                    self.camera.cancel_all()
+                    self.camera.device = cameras.currentData()
+                chosen = microphone_value()
+                if microphones is not None and chosen != os.getenv('ANDY_INPUT_DEVICE', ''):
                     if self.thread and self.thread.is_alive():
                         self.pause()
                     if chosen:
                         os.environ['ANDY_INPUT_DEVICE'] = chosen
                     else:
                         os.environ.pop('ANDY_INPUT_DEVICE', None)
-                self.heading = 'Camera and microphone selected'
+                self.heading = titles[section] + ' saved'
                 self.detail = 'Restart listening if the microphone changed. Camera permission is still required for every photo.'
                 self.setToolTip(self.heading + '\n' + self.detail)
                 self.update()
@@ -631,6 +692,8 @@ def main():
         def contextMenuEvent(self, event):
             self.menu_open = True
             menu = QMenu(self)
+            menu.addAction(self.microphone_action)
+            menu.addAction(self.camera_action)
             menu.addAction(self.device_action)
             menu.addSeparator()
             running = bool(self.thread and self.thread.is_alive())
