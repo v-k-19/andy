@@ -47,6 +47,24 @@ Examples:
 - “Tell me technology news.” — recent headlines matching that topic.
 - “Explain how a processor works.” Then, after waking Andy again: “Give me an example.” — uses recent conversation context.
 
+## Pixy webcam and microphone
+
+Andy can answer questions about **one camera snapshot at a time**. It does not watch continuously or record video. No camera photo is saved to disk.
+
+1. Update Andy and run `bash install-desktop.sh` to install the new OpenCV camera dependency.
+2. Right-click the orb → **Camera → Camera and microphone settings…**.
+3. Select your **Pixy** camera and its microphone, then save. Listing devices reads names only; it does not open the lens or microphone. If the microphone changes, click the orb to restart listening.
+4. Wake Andy and say **“What do you see?”**, **“What am I holding?”**, or **“Look at this and describe it.”**
+5. A native dialog asks **“Allow Andy to use your camera once?”** Choose **Allow once** or **Deny**. **Deny is the default**, including Escape or closing the dialog. Requests expire after one minute.
+
+**Andy does not open the camera until you approve that particular request.** Approval is consumed by one snapshot and cannot be reused. Each new camera question requires a new dialog. Pausing, closing Andy, disabling camera requests, or changing devices cancels pending permission. Startup frames may be discarded while the webcam initializes; only one resulting JPEG is used for the answer. The camera is released before model analysis, including on read/encode failure.
+
+Photos are sent only to a loopback Ollama endpoint on your PC, using the configured vision model (`gemma3:4b` by default). This path stays local even in **Cloud** or **Hybrid** AI mode. Remote `OLLAMA_URL` values are refused for camera questions. Images are not stored in conversation history or sent to OpenAI. **Spoken descriptions still follow your speech settings**: the default online neural voice receives the reply text. Use `ANDY_TTS_ENGINE=espeak` to keep spoken descriptions offline too.
+
+To prevent all camera prompts, uncheck **Camera → Allow permission requests (ask every time)**. This switch enables requests only; checking it does not open the camera or pre-authorize a photo. Camera and microphone selections are session-only. To choose a camera on startup, set `ANDY_CAMERA_DEVICE=/dev/video0` (use the path shown for Pixy in the picker). Microphone selection also supports `ANDY_INPUT_DEVICE`, as before.
+
+A webcam may expose multiple `/dev/video*` nodes. Select a node that provides video frames if the first entry cannot capture. Close other apps using that camera. Camera analysis can be slower than text questions on a CPU, and small text or fine details may be misread. Ask a fresh camera question for a new image; visual follow-ups do not reuse a stored photo. The actual Pixy hardware has not been tested in this cloud workspace.
+
 ## Local + cloud technical help
 
 Andy supports three **AI inference** modes from the orb’s right-click menu:

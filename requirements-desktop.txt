@@ -6,3 +6,4 @@ faster-whisper>=1.1,<1.3
 av>=11,<19
 edge-tts>=7,<8
 ddgs>=9,<10
+opencv-python-headless>=4.10,<5
